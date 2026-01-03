@@ -92,7 +92,7 @@ export HOME=/home/ubuntu
 timeout "$AGENT_TIMEOUT" "$AIDER_ENV/aider" \
     --model deepseek/deepseek-coder \
     --no-auto-commits \
-    --yes \
+    --yes-always \
     --message "$TASK" 2>&1
 EXIT_CODE=$?
 
@@ -117,3 +117,4 @@ echo "Run ID: $RUN_ID"
 echo "Status: $STATUS"
 echo "Changes: $CHANGES"
 echo "Workspace: $WORKSPACE"
+
