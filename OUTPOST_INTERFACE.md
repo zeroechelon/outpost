@@ -1,8 +1,33 @@
-# Outpost Interface Specification v1.1
+# Outpost Interface Specification v1.2
 
 > **Cross-Project API Contract for Multi-Agent Dispatch**
 
 This document enables any zeOS Claude session to invoke Outpost's multi-agent fleet.
+
+---
+
+## ⚠️ CRITICAL: INVOCATION CONSTRAINTS
+
+**ALL agent invocations MUST use the dispatch scripts. Direct CLI calls WILL FAIL.**
+
+### ❌ FORBIDDEN (will fail due to auth/ownership)
+
+```bash
+# NEVER DO THIS - runs as root, credentials are for ubuntu user
+'commands=["claude --print \"...\"""]'
+'commands=["gemini \"...\""]'
+'commands=["codex \"...\""]'
+'commands=["aider \"...\""]'
+```
+
+### ✅ REQUIRED (always use dispatch scripts)
+
+```bash
+# ALWAYS DO THIS - dispatch scripts handle sudo, env, git ownership
+'commands=["sudo -u ubuntu /home/ubuntu/claude-executor/dispatch-unified.sh <repo> \"<task>\" --executor=<agent>"]'
+```
+
+**Why?** SSM executes as root. CLI credentials live in `/home/ubuntu/`. Dispatch scripts bridge this gap.
 
 ---
 
@@ -44,7 +69,7 @@ aws ssm send-command \
 ### Get Results
 
 ```bash
-# Wait 3-5 seconds, then:
+# Wait 30-90 seconds depending on task complexity, then:
 aws ssm get-command-invocation \
   --command-id "<COMMAND_ID>" \
   --instance-id "mi-0d77bfe39f630bd5c" \
@@ -134,34 +159,14 @@ runs/<run-id>/
 
 ---
 
-## List Recent Runs
+## Common Errors & Solutions
 
-```bash
-aws ssm send-command \
-  --instance-ids "mi-0d77bfe39f630bd5c" \
-  --document-name "AWS-RunShellScript" \
-  --parameters 'commands=["sudo -u ubuntu /home/ubuntu/claude-executor/scripts/list-runs.sh"]' \
-  --query 'Command.CommandId' \
-  --output text
-```
-
----
-
-## Integration Example (Geaux File → Outpost)
-
-```python
-# In a Geaux File session, Claude can:
-
-# 1. Ask all 4 agents the same question
-task = "Review the customer onboarding flow and suggest improvements"
-repo = "geauxfile-website"
-
-# 2. Dispatch to all
-aws ssm send-command ... --executor=all
-
-# 3. Collect results from each agent
-# 4. Synthesize into unified recommendation
-```
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `fatal: detected dubious ownership` | Git repo owned by ubuntu, command ran as root | Use dispatch scripts (they handle sudo) |
+| `Please set Auth method in /root/.gemini/` | CLI looking for root's config | Use dispatch scripts (they run as ubuntu) |
+| `stdin is not a terminal` | CLI requires interactive TTY | Use dispatch scripts (they use --print/--yolo flags) |
+| `NO_RESPONSE_YET` | Agent still processing | Wait longer (30-90 seconds) |
 
 ---
 
@@ -171,6 +176,7 @@ aws ssm send-command ... --executor=all
 - **SSM Instance:** mi-0d77bfe39f630bd5c
 - **Region:** us-east-1
 - **Executor Path:** `/home/ubuntu/claude-executor/`
+- **Guard File:** `/home/ubuntu/claude-executor/AGENTS_README.md`
 
 ---
 
@@ -188,12 +194,14 @@ AWS_SECRET_ACCESS_KEY: [In richie profile preferences]
 
 ## Version
 
-**Outpost v1.1** — Four-agent fleet for multi-model orchestration
+**Outpost v1.2** — Four-agent fleet with invocation constraints
 
 ### Changelog
 - v1.0: Initial release (3 agents: Claude, Codex, Gemini)
 - v1.1: Added Aider with DeepSeek Coder backend
+- v1.2: Added explicit invocation constraints, error documentation, guard file
 
 ---
 
 *This interface is stable. Breaking changes will increment major version.*
+*Agents MUST read this document before invoking Outpost.*
