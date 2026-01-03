@@ -98,7 +98,7 @@ echo "🤖 Running Claude Code (Opus 4.5)..."
 export HOME=/home/ubuntu
 
 # H1 FIX: Wrap in timeout
-timeout "$AGENT_TIMEOUT" claude --print "$TASK" 2>&1
+timeout "$AGENT_TIMEOUT" claude --print --dangerously-skip-permissions "$TASK" 2>&1
 EXIT_CODE=$?
 
 # Check for timeout
@@ -140,3 +140,4 @@ echo "Run ID: $RUN_ID"
 echo "Status: $STATUS"
 echo "Changes: $CHANGES"
 echo "Workspace: $WORKSPACE"
+
