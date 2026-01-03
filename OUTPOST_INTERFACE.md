@@ -1,6 +1,6 @@
-# Outpost Interface Specification v1.4
+# Outpost Interface Specification v1.5
 
-> **v1.4 Features:** Security hardening, timeout protection, race-safe caching, dynamic branch detection
+> **v1.5 Features:** Context injection system for continuity-aware agent execution
 
 > **Cross-Project API Contract for Multi-Agent Dispatch**
 
@@ -81,6 +81,86 @@ aws ssm get-command-invocation \
 
 ---
 
+## Context Injection (v1.5.0 — NEW)
+
+Context injection prepends zeOS knowledge (SOUL, profile, journals) to agent tasks, enabling continuity-aware execution.
+
+### Usage
+
+```bash
+# Without context (default - OFF)
+dispatch-unified.sh <repo> "<task>" --executor=claude
+
+# With context (standard level)
+dispatch-unified.sh <repo> "<task>" --executor=claude --context
+
+# Specific level
+dispatch-unified.sh <repo> "<task>" --executor=claude --context=minimal
+dispatch-unified.sh <repo> "<task>" --executor=claude --context=standard
+dispatch-unified.sh <repo> "<task>" --executor=claude --context=full
+
+# Custom token budget
+dispatch-unified.sh <repo> "<task>" --executor=claude --context=1400
+```
+
+### Context Levels
+
+| Level | Token Budget | Sections Included |
+|-------|--------------|-------------------|
+| `minimal` | ~600 | SOUL, JOURNAL |
+| `standard` | ~1200 | SOUL, ANCHORS, PROFILE, JOURNAL |
+| `full` | ~1800 | All sections including ROADMAP |
+| `<number>` | 600-2000 | Custom budget |
+
+### Sections
+
+| Section | Purpose | When Included |
+|---------|---------|---------------|
+| **SOUL** | Project identity and constraints | Always (never dropped) |
+| **ANCHORS** | Long-lived decisions (never summarized) | Standard+ |
+| **PROFILE** | Operator preferences | Standard+ |
+| **JOURNAL** | Recent session state | Minimal+ (summarized if stale) |
+| **ROADMAP** | Current phase | Full only |
+
+### SSM Example with Context
+
+```bash
+aws ssm send-command \
+  --instance-ids "mi-0d77bfe39f630bd5c" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["sudo -u ubuntu /home/ubuntu/claude-executor/dispatch-unified.sh swords-of-chaos-reborn \"Add PARTY command for group combat\" --executor=claude --context=standard"]' \
+  --query 'Command.CommandId' \
+  --output text
+```
+
+### Context Logging
+
+Each run with context generates `context.json` with provenance:
+
+```json
+{
+  "injection_id": "INJ-20260103-183000-a1b2c3",
+  "level": "standard",
+  "sections": ["soul", "anchors", "profile", "journal"],
+  "token_counts": { "total": 850 },
+  "provenance": {
+    "soul": "apps/swords-of-chaos/SOC_SOUL.md",
+    "journal": "session-journals/2026-01-03-session.md"
+  }
+}
+```
+
+### When to Use Context
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Simple fix, known repo | No context needed |
+| New feature, needs project understanding | `--context=standard` |
+| Complex refactor, strategic work | `--context=full` |
+| Quick query to all agents | No context (faster) |
+
+---
+
 ## Fleet Configuration
 
 | Agent | Model | Cost | Strengths |
@@ -95,16 +175,15 @@ aws ssm get-command-invocation \
 
 ---
 
-## v1.4 Improvements
+## v1.5 Improvements
 
 | Feature | Description |
 |---------|-------------|
-| **Security** | GitHub token from .env, fail-fast if missing |
-| **Timeout** | 10-minute default (AGENT_TIMEOUT configurable) |
-| **Race-Safe** | flock prevents cache corruption on parallel dispatch |
-| **Branch Detection** | Auto-detects default branch (main/master/etc) |
-| **Running Status** | Immediate status:running in summary.json |
-| **Workspace Promotion** | `promote-workspace.sh <run-id>` pushes changes |
+| **Context Injection** | Prepend zeOS context to tasks for continuity |
+| **ANCHORS Section** | Long-lived decisions protected from summarization |
+| **Provenance Logging** | Track exactly which files contributed to context |
+| **Security Scrubbing** | 15+ patterns for credential redaction |
+| **Deterministic Summarization** | Predictable journal trimming when stale |
 
 ---
 
@@ -113,10 +192,11 @@ aws ssm get-command-invocation \
 Each agent creates a run directory with:
 ```
 runs/<run-id>/
-├── task.md          # Original task
+├── task.md          # Original task (or enhanced with context)
 ├── output.log       # Agent stdout/stderr
 ├── summary.json     # Metadata (includes status:running at start)
 ├── diff.patch       # Git changes (if any)
+├── context.json     # Context injection metadata (if --context used)
 └── workspace/       # Isolated repo copy
 ```
 
@@ -134,7 +214,8 @@ runs/<run-id>/
   "before_sha": "abc...",
   "after_sha": "def...",
   "changes": "committed|uncommitted|none",
-  "workspace": "/home/ubuntu/claude-executor/runs/.../workspace"
+  "workspace": "/home/ubuntu/claude-executor/runs/.../workspace",
+  "context_injection_id": "INJ-20260103-001234-abc123"
 }
 ```
 
@@ -163,6 +244,7 @@ aws ssm send-command \
 | `stdin is not a terminal` | CLI requires interactive TTY | Use dispatch scripts (they use --print/--yolo flags) |
 | `NO_RESPONSE_YET` | Agent still processing | Wait longer (30-90 seconds) |
 | `status: timeout` | Agent exceeded AGENT_TIMEOUT | Increase timeout or simplify task |
+| `Context assembly failed` | SOUL file not found | Ensure repo has proper zeOS structure |
 
 ---
 
@@ -178,7 +260,7 @@ aws ssm send-command \
 
 ## Version
 
-**Outpost v1.4** — Security hardening, reliability improvements
+**Outpost v1.5.0** — Context injection system
 
 ### Changelog
 - v1.0: Initial release (3 agents: Claude, Codex, Gemini)
@@ -186,6 +268,7 @@ aws ssm send-command \
 - v1.2: Added explicit invocation constraints, error documentation
 - v1.3: Workspace isolation for true parallelism
 - v1.4: Security hardening, timeout, race-safe caching, dynamic branches
+- v1.5: **Context injection system** (--context flag, ANCHORS section, provenance logging)
 
 ---
 
