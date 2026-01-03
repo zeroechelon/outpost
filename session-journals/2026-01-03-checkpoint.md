@@ -1,49 +1,57 @@
-# Session Journal: 2026-01-03 Outpost Checkpoint
+# Session Journal: 2026-01-03 Outpost Context Injection Design
 
 **Status:** Checkpoint
 **Project:** Outpost
-**Timestamp:** 2026-01-03T08:13:25Z
+**Timestamp:** 2026-01-03T17:49:23Z
 
 ---
 
-## Current State
+## Session Summary
 
-**Version:** v1.4 (released this session)
-**Server:** SOC (52.44.78.2) - deployed and verified
+### Completed This Session
+1. **v1.4 Release** - Security hardening, timeout, race-safe caching
+2. **v1.4.1** - Fixed Codex CLI (`codex exec --dangerously-bypass-approvals-and-sandbox`)
+3. **v1.4.2** - Full autonomy flags for all agents
+4. **v1.4.3** - Auto-sync scripts from GitHub (no more manual deploys)
+5. **DeepSeek API key** - Configured for Aider
+6. **Fleet Query** - All 4 agents consulted on zeOS context injection
 
-### Recent Accomplishments
+### Fleet Consensus on Context Injection
 
-1. **4-Agent Fleet Review** - All agents (Claude, Gemini, Codex, Aider) reviewed codebase
-2. **v1.4 Release** - Security hardening, timeout protection, race-safe caching
-3. **Documentation** - README, INTERFACE, SOUL all updated
+**Value Rankings:**
+- SOUL + Journals = highest value (tier 1)
+- Profile + Roadmap = useful (tier 2)
 
-### v1.4 Features Deployed
+**Token Budget:**
+- Sweet spot: 1000-1500 tokens
+- Hard cap: 2000 tokens
 
-| Feature | Status |
-|---------|--------|
-| GITHUB_TOKEN from .env | ✅ Active |
-| 10-min agent timeout | ✅ Active |
-| flock race protection | ✅ Active |
-| Dynamic branch detection | ✅ Active |
-| Running status tracking | ✅ Active |
-| promote-workspace.sh | ✅ Available |
+**Format:**
+- Structured Markdown with XML wrapper
+- Clear section headers
+- Most recent first for journals
 
-### Server Files
+**Failure Modes:**
+- Stale journals (most dangerous)
+- Contradictory guidance
+- Context overload
 
-```
-/home/ubuntu/claude-executor/
-├── .env                  # Credentials (GITHUB_TOKEN, AGENT_TIMEOUT)
-├── dispatch*.sh          # v1.4 agent dispatchers
-├── backup-v1.3/          # Previous version preserved
-└── runs/                 # 80+ run artifacts
-```
+### Open Design Questions
 
-### Next Steps (When Ready)
-
-1. Configure DeepSeek API key for Aider
-2. Consider git worktrees for v1.5
-3. Build compare-results.sh for multi-agent comparison
+1. Should context injection be optional (--context flag)?
+2. Default ON or OFF?
+3. Standardized injection format for data collection?
+4. Potential proprietary algorithm / IP
 
 ---
 
-*Checkpoint - v1.4 operational*
+## Current Server State
+
+**Version:** v1.4.3
+**Auto-sync:** ENABLED (5-min cache)
+**Autonomy flags:** ALL ACTIVE
+**Fleet:** 4/4 operational
+
+---
+
+*Checkpoint - Context injection design in progress*
