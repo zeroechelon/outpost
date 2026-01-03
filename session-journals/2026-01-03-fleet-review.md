@@ -1,85 +1,62 @@
-# Session Journal: 2026-01-03 Outpost Fleet Review & Fixes
+# Session Journal: 2026-01-03 Outpost Fleet Review & v1.4 Release
 
-**Status:** In Progress
+**Status:** Complete
 **Project:** Outpost
-**Timestamp:** 2026-01-03T07:55:00Z
-**Batch ID:** 20260103-074707-batch-pr03
+**Timestamp:** 2026-01-03T07:55:00Z - 08:30:00Z
+**Duration:** ~35 minutes
 
 ---
 
 ## Executive Summary
 
-Conducted 4-agent parallel review of Outpost codebase. All agents (Claude Code, Gemini, Codex, Aider) completed successfully. Identified critical bugs, security issues, and improvement opportunities. Implementing fixes in phases.
+Conducted 4-agent parallel review of Outpost codebase. Identified critical bugs, security issues, and improvement opportunities. Implemented all fixes as Outpost v1.4 and deployed to production.
 
 ---
 
 ## Fleet Review Results
 
-### Agent Performance
+### 4-Agent Review (Batch: 20260103-074707-batch-pr03)
 
-| Agent | Run ID | Status | Quality |
-|-------|--------|--------|---------|
-| Claude Code | 20260103-074707-l1ar16 | ✅ success | Actionable summary |
-| Gemini | 20260103-074707-gemini-sezcwr | ✅ success | Deep analysis |
-| Codex | 20260103-074707-codex-8nrrk4 | ✅ success | Critical bugs found |
-| Aider | 20260103-074707-aider-yuk2we | ✅ success | Generic (git issue) |
-
----
-
-## Issues Identified
-
-### 🔴 CRITICAL
-
-#### C1: push-changes.sh is BROKEN
-- **Found by:** Codex
-- **Location:** scripts/push-changes.sh
-- **Problem:** Script commits from repos/ but v1.3+ writes to runs/<run-id>/workspace/
-- **Fix:** Created promote-workspace.sh ✅
-
-#### C2: Hardcoded GitHub PAT in Scripts
-- **Found by:** All agents
-- **Problem:** Security risk, rotation hazard
-- **Fix:** Environment variable, fail fast if missing ✅
-
-#### C3: Hardcoded origin/main Branch
-- **Found by:** Codex
-- **Problem:** Repos with master fail silently
-- **Fix:** Detect origin/HEAD dynamically ✅
-
-### 🟠 HIGH PRIORITY
-
-#### H1: No Timeout on Agent Execution
-- **Found by:** All agents
-- **Problem:** Hung CLI waits until SSM timeout (1 hour)
-- **Fix:** Wrap in timeout $AGENT_TIMEOUT (default 600s) ✅
-
-#### H3: Race Condition on Shared Cache
-- **Found by:** Gemini
-- **Problem:** Concurrent dispatches could corrupt cache
-- **Fix:** flock around pre-flight fetch ✅
-
-#### H4: No "running" Status Written
-- **Found by:** Codex
-- **Problem:** Killed runs invisible to list-runs.sh
-- **Fix:** Write summary.json with status:running at start ✅
-
-#### B1: Aider Git Not Initialized
-- **Found by:** Fleet review
-- **Problem:** "Git repo: none" in Aider output
-- **Fix:** Add safe.directory config ✅
-
-### 🟡 DOCUMENTATION (Pending)
-
-- D1: README.md Shows 3 Agents
-- D2: MULTI_AGENT_INTEGRATION.md Stale Models
+| Agent | Run ID | Status | Key Contribution |
+|-------|--------|--------|------------------|
+| Claude Code | 20260103-074707-l1ar16 | ✅ | Prioritized quick wins |
+| Gemini | 20260103-074707-gemini-sezcwr | ✅ | Deep analysis, git worktrees |
+| Codex | 20260103-074707-codex-8nrrk4 | ✅ | Critical bugs with line refs |
+| Aider | 20260103-074707-aider-yuk2we | ✅ | Generic (exposed git issue) |
 
 ---
 
-## Fix Implementation
+## Issues Fixed
 
-### Phase 1: Critical Security & Functionality ✅ COMPLETE
+### 🔴 CRITICAL (All Fixed)
 
-**Commits:**
+| ID | Issue | Fix |
+|----|-------|-----|
+| C1 | push-changes.sh broken for v1.3 workspaces | Created promote-workspace.sh |
+| C2 | Hardcoded GitHub PAT | Environment variable, fail-fast |
+| C3 | Hardcoded origin/main | Dynamic branch detection |
+
+### 🟠 HIGH PRIORITY (All Fixed)
+
+| ID | Issue | Fix |
+|----|-------|-----|
+| H1 | No timeout on agents | 10-min default (AGENT_TIMEOUT) |
+| H3 | Race condition on cache | flock in dispatch-unified.sh |
+| H4 | No running status | Immediate summary.json write |
+| B1 | Aider git not initialized | safe.directory config |
+
+### 🟡 DOCUMENTATION (All Fixed)
+
+| ID | Issue | Fix |
+|----|-------|-----|
+| D1 | README shows 3 agents | Updated to 4 agents |
+| D2 | Stale model names | Updated all docs |
+
+---
+
+## Commits
+
+### Phase 1: Scripts
 - c7a6703: dispatch.sh v1.4
 - b8bbca8: dispatch-codex.sh v1.4
 - 4910b4a: dispatch-gemini.sh v1.4
@@ -88,40 +65,53 @@ Conducted 4-agent parallel review of Outpost codebase. All agents (Claude Code, 
 - d107689: promote-workspace.sh (new)
 - b1d274b: setup-env.sh (new)
 
-**Server Deployment:** ✅ Complete
-- All v1.3 scripts backed up to backup-v1.3/
-- All v1.4 scripts installed
-- GITHUB_TOKEN added to ubuntu .bashrc
-- AGENT_TIMEOUT set to 600s
+### Phase 2: Documentation
+- 9334179: README.md v1.4
+- 862859b: MULTI_AGENT_INTEGRATION.md v1.4
+- eb7281a: OUTPOST_INTERFACE.md v1.4
 
-### Phase 2: Documentation (Pending)
-
-- [ ] Update README.md with 4-agent fleet
-- [ ] Update MULTI_AGENT_INTEGRATION.md models
+### Sync: .env sourcing
+- 3aad8e5, 04fe0e4, ad846f2, 3b54c7b, 6a3866b
 
 ---
 
-## Checkpoints
+## Deployment
 
-| Checkpoint | Time | Status |
-|------------|------|--------|
-| Documentation complete | 07:55 UTC | ✅ |
-| Phase 1 complete | 08:15 UTC | ✅ |
-| Phase 2 complete | | Pending |
-| Verification complete | | Pending |
-
----
-
-## v1.4 Changes Summary
-
-1. **Security:** GITHUB_TOKEN required from environment (no fallback)
-2. **Reliability:** 10-minute timeout on all agent executions
-3. **Reliability:** flock prevents cache corruption on parallel dispatch
-4. **Reliability:** "running" status written immediately
-5. **Branch Detection:** Dynamic origin/HEAD detection
-6. **New Script:** promote-workspace.sh for pushing isolated workspace changes
-7. **Aider Fix:** safe.directory configured for workspace
+**Server:** SOC (52.44.78.2)
+- v1.3 scripts backed up to backup-v1.3/
+- v1.4 scripts deployed and verified
+- .env created with GITHUB_TOKEN, AGENT_TIMEOUT
+- Verification test passed (Aider - git repo recognized)
 
 ---
 
-*Session in progress - Phase 2 pending*
+## v1.4 Feature Summary
+
+| Feature | Description |
+|---------|-------------|
+| Security | GITHUB_TOKEN from .env, fail-fast |
+| Timeout | 10-min default, configurable |
+| Race-Safe | flock on shared cache |
+| Dynamic Branches | Auto-detect origin/HEAD |
+| Running Status | Immediate summary.json |
+| Workspace Promotion | promote-workspace.sh |
+| Aider Git Fix | safe.directory configured |
+
+---
+
+## Known Issues (Deferred)
+
+- **H2: SSM 24KB output limit** - Defer to v1.5 (S3 offloading)
+- **Aider API key** - DeepSeek key needs setup by operator
+
+---
+
+## Next Steps
+
+1. Set up DeepSeek API key for Aider
+2. Consider git worktrees for v1.5 (Gemini recommendation)
+3. Create compare-results.sh for multi-agent comparison
+
+---
+
+*Session Complete - Outpost v1.4 Released*
