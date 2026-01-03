@@ -1,9 +1,9 @@
 #!/bin/bash
 # Source environment if available
 [[ -f /home/ubuntu/claude-executor/.env ]] && source /home/ubuntu/claude-executor/.env
-# dispatch-codex.sh - Headless Codex CLI executor for Outpost v1.4
+# dispatch-codex.sh - Headless Codex CLI executor for Outpost v1.4.1
 # WORKSPACE ISOLATION: Each run gets its own repo copy
-# v1.4: Security hardening, dynamic branch detection, timeout protection
+# v1.4.1: Fixed CLI invocation - use 'codex exec' for non-interactive mode
 
 REPO_NAME="${1:-}"
 TASK="${2:-}"
@@ -82,8 +82,10 @@ echo "Workspace SHA: $BEFORE_SHA"
 echo "🤖 Running Codex CLI (gpt-5.2-codex)..."
 export HOME=/home/ubuntu
 
-# H1 FIX: Timeout protection
-timeout "$AGENT_TIMEOUT" codex --approval=never --skip-git-repo-check "$TASK" 2>&1
+# v1.4.1 FIX: Use 'codex exec' with correct flags for non-interactive mode
+# --full-auto: automatic execution with workspace-write sandbox
+# --skip-git-repo-check: allow running in workspace
+timeout "$AGENT_TIMEOUT" codex exec --full-auto --skip-git-repo-check "$TASK" 2>&1
 EXIT_CODE=$?
 
 [[ $EXIT_CODE -eq 124 ]] && STATUS="timeout" || { [[ $EXIT_CODE -eq 0 ]] && STATUS="success" || STATUS="failed"; }
