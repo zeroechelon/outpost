@@ -1,6 +1,6 @@
 # Outpost
 
-**Multi-Agent Headless Executor System**
+**Multi-Agent Headless Executor System v1.4**
 
 Outpost enables Claude UI sessions to dispatch coding tasks to remote servers running multiple AI coding agents in parallel.
 
@@ -8,69 +8,75 @@ Outpost enables Claude UI sessions to dispatch coding tasks to remote servers ru
 
 | Agent | Model | Status | Dispatcher |
 |-------|-------|--------|------------|
-| Claude Code | **claude-opus-4-5** | ✅ Active | `dispatch.sh` |
+| Claude Code | claude-opus-4-5-20251101 | ✅ Active | `dispatch.sh` |
 | OpenAI Codex | gpt-5.2-codex | ✅ Active | `dispatch-codex.sh` |
-| Gemini CLI | **gemini-3-pro** | ✅ Active | `dispatch-gemini.sh` |
+| Gemini CLI | gemini-3-pro-preview | ✅ Active | `dispatch-gemini.sh` |
+| Aider | deepseek/deepseek-coder | ✅ Active | `dispatch-aider.sh` |
+
+**Subscription Total:** $170/mo (Claude Max + ChatGPT Plus + Gemini AI Ultra)  
+**API Agent:** Aider uses DeepSeek API (~$0.14/MTok)
 
 ## Architecture
 
 ```
 Claude UI (Orchestrator) → AWS SSM SendCommand
-    ↓                    ↓                    ↓
-dispatch.sh      dispatch-codex.sh    dispatch-gemini.sh
-(Opus 4.5)       (Codex)              (Gemini 3 Pro)
-    ↓                    ↓                    ↓
-        Shared Infrastructure
-        (repos/, runs/, git credentials)
+    │
+    └─→ dispatch-unified.sh
+         │
+         ├─→ dispatch.sh       (Claude Code)
+         ├─→ dispatch-codex.sh (OpenAI Codex)
+         ├─→ dispatch-gemini.sh(Gemini CLI)
+         └─→ dispatch-aider.sh (Aider)
+              │
+              └─→ Isolated workspace per agent
 ```
 
 ## Quick Start
 
+### Single Agent
 ```bash
-# Dispatch to Claude Code (Opus 4.5)
 aws ssm send-command \
   --instance-ids "mi-0d77bfe39f630bd5c" \
   --document-name "AWS-RunShellScript" \
-  --parameters 'commands=["sudo -u ubuntu /home/ubuntu/claude-executor/dispatch.sh repo-name \"task\""]'
-
-# Dispatch to OpenAI Codex
-aws ssm send-command ... 'commands=["sudo -u ubuntu /home/ubuntu/claude-executor/dispatch-codex.sh repo-name \"task\""]'
-
-# Dispatch to Gemini CLI (Gemini 3 Pro)
-aws ssm send-command ... 'commands=["sudo -u ubuntu /home/ubuntu/claude-executor/dispatch-gemini.sh repo-name \"task\""]'
+  --parameters 'commands=["sudo -u ubuntu /home/ubuntu/claude-executor/dispatch-unified.sh <repo> \"<task>\" --executor=claude"]'
 ```
 
-## Cost Model
+### All Agents (Parallel)
+```bash
+aws ssm send-command \
+  --instance-ids "mi-0d77bfe39f630bd5c" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["sudo -u ubuntu /home/ubuntu/claude-executor/dispatch-unified.sh <repo> \"<task>\" --executor=all"]'
+```
 
-| Service | Monthly | Notes |
-|---------|---------|-------|
-| Claude Max | $100 | Unlimited Claude Code (Opus 4.5) |
-| ChatGPT Plus | $20 | Unlimited Codex CLI |
-| Google AI Ultra | ~$50 | Gemini 3 Pro access |
-| **Total** | **$170** | Three top-tier AI executors |
+## v1.4 Features
+
+- **Security:** GitHub token from environment (no hardcoding)
+- **Timeout Protection:** 10-minute default agent timeout
+- **Race-Safe:** flock prevents cache corruption on parallel dispatch
+- **Dynamic Branches:** Auto-detects default branch (main/master/etc)
+- **Running Status:** Immediate status:running in summary.json
+- **Workspace Promotion:** `promote-workspace.sh` for pushing changes
+
+## Helper Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/list-runs.sh` | List recent runs with status |
+| `scripts/get-results.sh` | Retrieve run artifacts |
+| `scripts/promote-workspace.sh` | Push workspace changes to origin |
 
 ## Documentation
 
-- [Multi-Agent Integration Guide](docs/MULTI_AGENT_INTEGRATION.md)
-- [Outpost Soul](docs/OUTPOST_SOUL.md)
+- [OUTPOST_INTERFACE.md](OUTPOST_INTERFACE.md) - Full API specification
+- [docs/MULTI_AGENT_INTEGRATION.md](docs/MULTI_AGENT_INTEGRATION.md) - Integration guide
 
-## Scripts
-
-| Script | Agent | Model |
-|--------|-------|-------|
-| `dispatch.sh` | Claude Code | claude-opus-4-5-20251101 |
-| `dispatch-codex.sh` | OpenAI Codex | gpt-5.2-codex |
-| `dispatch-gemini.sh` | Gemini CLI | gemini-3-pro-preview |
-| `get-results.sh` | - | Retrieve outputs |
-| `list-runs.sh` | - | List runs |
-| `push-changes.sh` | - | Commit changes |
-
-## Server
+## Server Details
 
 - **Host:** SOC (52.44.78.2)
 - **SSM Instance:** mi-0d77bfe39f630bd5c
-- **Region:** us-east-1
+- **Executor Path:** `/home/ubuntu/claude-executor/`
 
-## License
+---
 
-Private - Zero Echelon LLC
+*Outpost v1.4 - Multi-Agent Headless Executor*
