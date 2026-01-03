@@ -1,5 +1,5 @@
 #!/bin/bash
-# dispatch-unified.sh - Unified multi-agent dispatcher for Outpost v1.0
+# dispatch-unified.sh - Unified multi-agent dispatcher for Outpost v1.1
 # Enables single, multiple, or all-agent execution from one command
 
 set -e
@@ -24,13 +24,14 @@ if [[ -z "$REPO_NAME" || -z "$TASK" ]]; then
     echo "  claude    - Claude Code (Opus 4.5)"
     echo "  codex     - OpenAI Codex (GPT-5.2)"
     echo "  gemini    - Gemini CLI (Gemini 3 Pro)"
-    echo "  all       - All three agents in parallel"
+    echo "  aider     - Aider (DeepSeek Coder) [NEW]"
+    echo "  all       - All four agents in parallel"
     echo ""
-    echo "Multiple agents: --executor=claude,gemini"
+    echo "Multiple agents: --executor=claude,gemini,aider"
     echo ""
     echo "Examples:"
     echo "  dispatch-unified.sh soc-reborn \"count files\" --executor=claude"
-    echo "  dispatch-unified.sh soc-reborn \"count files\" --executor=claude,codex"
+    echo "  dispatch-unified.sh soc-reborn \"count files\" --executor=claude,aider"
     echo "  dispatch-unified.sh soc-reborn \"count files\" --executor=all"
     exit 1
 fi
@@ -47,9 +48,9 @@ echo "Task:       $TASK"
 echo "Executors:  $EXECUTORS"
 echo "═══════════════════════════════════════════════════════════════"
 
-# Expand "all" to full list
+# Expand "all" to full list (now includes aider)
 if [[ "$EXECUTORS" == "all" ]]; then
-    EXECUTORS="claude,codex,gemini"
+    EXECUTORS="claude,codex,gemini,aider"
 fi
 
 # Track PIDs for parallel execution
@@ -71,6 +72,9 @@ dispatch_agent() {
             ;;
         gemini)
             script="dispatch-gemini.sh"
+            ;;
+        aider)
+            script="dispatch-aider.sh"
             ;;
         *)
             echo "❌ Unknown executor: $agent"
