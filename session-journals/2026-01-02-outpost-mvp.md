@@ -1,164 +1,153 @@
-# Session Journal: 2026-01-02-outpost-mvp
+# Session Journal: 2026-01-02/03 Outpost Multi-Agent Deployment
 
-**Status:** Complete
-**Application:** Outpost
-**Date:** 2026-01-02
-**Duration:** ~3 hours
+**Status:** Checkpoint 3 - Three-Agent Fleet Operational
+**Project:** Outpost
+**Date:** 2026-01-03T00:10:00Z
 
----
+## Session Summary
 
-## Executive Summary
-
-Created Outpost - a multi-agent headless executor system enabling Claude UI to dispatch coding tasks to remote servers running AI coding agents. Successfully deployed and tested both Claude Code and OpenAI Codex as parallel executors.
-
-**Key Achievement:** Two AI agents operational from single orchestration point, using subscription auth (no API charges), returning identical results on test tasks.
-
----
+Deployed Outpost - a multi-agent headless executor system enabling Claude UI to dispatch coding tasks to remote servers running three AI coding agents in parallel: Claude Code (Opus 4.5), OpenAI Codex, and Gemini CLI (Gemini 3 Pro).
 
 ## Accomplishments
 
-### 1. Claude Code Integration ✅
-- Installed Claude Code v2.0.76 on SOC server
-- Discovered macOS Keychain → Linux file auth transfer pattern
-- Credentials location: `~/.claude/.credentials.json`
-- E2E tested: read-only task and file modification
+### 1. Three-Agent Fleet Deployed
 
-### 2. OpenAI Codex Integration ✅
-- Installed Codex CLI v0.77.0 on SOC server
-- Auth file: `~/.codex/auth.json` (file-based on both platforms)
-- Uses ChatGPT Plus subscription ($20/mo, no per-use charges)
-- E2E tested: read-only task
+| Agent | Model | Auth Method | Dispatcher |
+|-------|-------|-------------|------------|
+| Claude Code | claude-opus-4-5-20251101 | Claude Max subscription | dispatch.sh |
+| OpenAI Codex | gpt-5.2-codex | ChatGPT Plus subscription | dispatch-codex.sh |
+| Gemini CLI | gemini-3-pro-preview | Google AI Ultra subscription | dispatch-gemini.sh |
 
-### 3. Multi-Agent Architecture
+### 2. Authentication Patterns Discovered
+
+| Agent | macOS Storage | Linux Storage |
+|-------|---------------|---------------|
+| Claude Code | Keychain (`security find-generic-password`) | `~/.claude/.credentials.json` |
+| OpenAI Codex | `~/.codex/auth.json` | `~/.codex/auth.json` |
+| Gemini CLI | `~/.gemini/oauth_creds.json` | `~/.gemini/oauth_creds.json` |
+
+All three use OAuth with subscription tiers - **zero API charges**.
+
+### 3. Headless Execution Commands
+
+```bash
+# Claude Code (Opus 4.5)
+claude --model claude-opus-4-5-20251101 --dangerously-skip-permissions -p "task"
+
+# OpenAI Codex
+codex exec --full-auto --sandbox workspace-write "task"
+
+# Gemini CLI (Gemini 3 Pro)
+gemini --model gemini-3-pro-preview --yolo -p "task"
+```
+
+### 4. Server Configuration (SOC 52.44.78.2)
 
 ```
-┌─────────────────────────────────────────┐
-│         CLAUDE UI (Orchestrator)        │
-│              AWS SSM SendCommand        │
-└─────────┬───────────────┬───────────────┘
-          │               │
-    ┌─────▼─────┐   ┌─────▼─────┐
-    │ dispatch  │   │ dispatch- │
-    │ .sh       │   │ codex.sh  │
-    │ Claude    │   │ Codex     │
-    └───────────┘   └───────────┘
-          │               │
-          └───────┬───────┘
-                  ▼
-         Shared Infrastructure
-         (repos/, runs/, git creds)
+/home/ubuntu/claude-executor/
+├── dispatch.sh          # Claude Code (Opus 4.5)
+├── dispatch-codex.sh    # OpenAI Codex
+├── dispatch-gemini.sh   # Gemini CLI (Gemini 3 Pro)
+├── repos/               # Cloned repositories
+├── runs/                # Execution artifacts
+└── scripts/             # Helper scripts (get-results, list-runs, push-changes)
+
+/home/ubuntu/.claude/.credentials.json   # Claude Max auth
+/home/ubuntu/.codex/auth.json            # ChatGPT Plus auth
+/home/ubuntu/.gemini/oauth_creds.json    # AI Ultra auth
+/home/ubuntu/.gemini/settings.json       # previewFeatures: true (for Gemini 3)
 ```
 
-### 4. Scripts Deployed
+### 5. Test Results
 
-| Script | Purpose | Location |
-|--------|---------|----------|
-| dispatch.sh | Claude Code executor | /home/ubuntu/claude-executor/ |
-| dispatch-codex.sh | OpenAI Codex executor | /home/ubuntu/claude-executor/ |
-| get-results.sh | Retrieve run outputs | scripts/ |
-| push-changes.sh | Commit and push | scripts/ |
-| list-runs.sh | List recent runs | scripts/ |
+| Run ID | Agent | Model | Task | Result |
+|--------|-------|-------|------|--------|
+| 20260102-205023-cs429e | Claude Code | sonnet-4 | Count JS files | 11 ✅ |
+| 20260102-215357-um2q2x | Claude Code | sonnet-4 | Add comment | Modified ✅ |
+| 20260102-230123-codex-lq1bfm | Codex | gpt-5.2 | Count JS files | 11 ✅ |
+| 20260102-235255-gemini-iv2lhu | Gemini | 2.5-pro | Count JS files | 35 ✅ |
+| 20260103-000247-gemini-6i3v9h | Gemini | **3-pro** | Count JS files | 35 ✅ |
 
----
+### 6. Conductor Research
 
-## Test Results
+Researched Google's Conductor extension for Gemini CLI:
+- Creates persistent markdown files for context across sessions
+- Similar philosophy to zeOS (context as managed artifact)
+- Useful for project-level context, but requires interactive mode
+- **Decision:** Not critical for MVP headless dispatch, but good for future enhancement
+- Gemini's `GEMINI.md` context files ARE loaded in headless mode
 
-| Test | Executor | Run ID | Result | Status |
-|------|----------|--------|--------|--------|
-| File count | Claude Code | 20260102-205023-cs429e | 11 JS files | ✅ |
-| File modify | Claude Code | 20260102-215357-um2q2x | Added comment | ✅ |
-| File count | OpenAI Codex | 20260102-230123-codex-lq1bfm | 11 JS files | ✅ |
+### 7. GitHub Commits
 
-**Both agents returned identical correct answers on shared task.**
-
----
-
-## Technical Discoveries
-
-### Authentication Patterns
-
-| Agent | macOS Storage | Linux Storage | Transfer Method |
-|-------|---------------|---------------|-----------------|
-| Claude Code | Keychain | ~/.claude/.credentials.json | `security find-generic-password` |
-| OpenAI Codex | ~/.codex/auth.json | ~/.codex/auth.json | Direct file copy |
-
-### Headless Execution Commands
-
-| Agent | Command | Skip Approvals |
-|-------|---------|----------------|
-| Claude Code | `claude -p "task"` | `--dangerously-skip-permissions` |
-| OpenAI Codex | `codex exec "task"` | `--full-auto --sandbox workspace-write` |
-
----
+**rgsuarez/outpost:**
+- README.md (three-agent fleet)
+- scripts/dispatch.sh (Opus 4.5)
+- scripts/dispatch-codex.sh
+- scripts/dispatch-gemini.sh (Gemini 3 Pro)
+- docs/MULTI_AGENT_INTEGRATION.md
+- docs/OUTPOST_SOUL.md
+- session-journals/
 
 ## Cost Model
 
-| Service | Monthly Cost | Includes |
-|---------|--------------|----------|
-| Claude Max | $100 | Unlimited Claude Code |
-| ChatGPT Plus | $20 | Unlimited Codex CLI |
-| **Total** | **$120** | Two full-power AI executors |
+| Service | Monthly | Notes |
+|---------|---------|-------|
+| Claude Max | $100 | Unlimited Opus 4.5 |
+| ChatGPT Plus | $20 | Unlimited Codex |
+| Google AI Ultra | ~$50 | Gemini 3 Pro access |
+| **Total** | **$170** | Three top-tier models, no API charges |
 
-No per-token API charges - both use subscription auth.
+## Architecture
 
----
+```
+┌───────────────────────────────────────────────────────────────┐
+│              CLAUDE UI (Orchestrator)                         │
+└───────────┬─────────────────┬─────────────────┬───────────────┘
+            │                 │                 │
+            ▼                 ▼                 ▼
+    ┌───────────────┐ ┌───────────────┐ ┌───────────────┐
+    │ dispatch.sh   │ │ dispatch-     │ │ dispatch-     │
+    │ Opus 4.5      │ │ codex.sh      │ │ gemini.sh     │
+    │               │ │ GPT-5.2       │ │ Gemini 3 Pro  │
+    └───────┬───────┘ └───────┬───────┘ └───────┬───────┘
+            │                 │                 │
+            └─────────────────┼─────────────────┘
+                              ▼
+                    Shared Infrastructure
+                    (repos/, runs/, credentials)
+```
 
-## Files Created/Modified
+## Multi-Agent Use Cases
 
-### GitHub (rgsuarez/outpost)
-- README.md
-- scripts/dispatch.sh
-- scripts/dispatch-codex.sh
-- scripts/get-results.sh
-- scripts/push-changes.sh
-- scripts/list-runs.sh
-- docs/OUTPOST_SOUL.md
-- docs/CODEX_INTEGRATION_SCOPE.md
-- session-journals/2026-01-02-outpost-mvp.md
+1. **Comparison** - Same task to all three, compare approaches
+2. **Consensus** - Multiple agents agree = high confidence
+3. **Parallel execution** - Race for fastest solution
+4. **Specialization** - Route based on agent strengths
+5. **Fallback** - Redundancy if one rate-limits
+6. **Cost optimization** - Use appropriate tier for task complexity
 
-### GitHub (rgsuarez/zeOS)
-- apps/outpost/OUTPOST_SOUL.md
+## Next Actions
 
-### SOC Server (52.44.78.2)
-- /home/ubuntu/claude-executor/dispatch.sh
-- /home/ubuntu/claude-executor/dispatch-codex.sh
-- /home/ubuntu/claude-executor/scripts/*.sh
-- /home/ubuntu/.claude/.credentials.json
-- /home/ubuntu/.codex/auth.json
+- [ ] Create unified dispatcher with `--executor` flag
+- [ ] Add parallel execution mode (`--executor all`)
+- [ ] Build comparison tooling for multi-agent outputs
+- [ ] Integrate Conductor for Gemini project context
+- [ ] Add S3 storage for large outputs (SSM 24KB limit)
+- [ ] Token refresh automation (cron job)
 
----
+## Files Changed This Session
 
-## Strategic Value
+**Created:**
+- rgsuarez/outpost (entire repo with multi-agent architecture)
+- dispatch-gemini.sh (Gemini 3 Pro executor)
+- docs/MULTI_AGENT_INTEGRATION.md
 
-Outpost enables:
-1. **Multi-model comparison** - Same task to different AIs, compare results
-2. **Parallel execution** - Race for fastest solution
-3. **Specialization** - Route tasks to best-fit agent
-4. **Fallback** - Redundancy if one rate-limits
-5. **Cost optimization** - Use cheaper model when adequate
+**Modified:**
+- dispatch.sh (upgraded to Opus 4.5)
+- dispatch-gemini.sh (upgraded to Gemini 3 Pro)
+- README.md (three-agent fleet status)
 
----
-
-## Future Enhancements
-
-- [ ] Unified dispatcher with `--executor` flag
-- [ ] Parallel mode (`--executor both`)
-- [ ] Comparison tooling (diff outputs)
-- [ ] S3 storage for large outputs
-- [ ] Gemini CLI integration (when available)
-- [ ] Token refresh automation
-
----
-
-## Session Metrics
-
-- Commands executed: ~40
-- SSM invocations: ~15
-- GitHub commits: 8
-- Tests passed: 3/3
-
----
-
-**Session Complete. Multi-agent Outpost operational.**
-
-*"Two heads are better than one. Now we have two AI heads."*
+**Server:**
+- Installed Gemini CLI v0.22.5
+- Deployed ~/.gemini/ credentials (AI Ultra OAuth)
+- Enabled previewFeatures for Gemini 3 Pro
