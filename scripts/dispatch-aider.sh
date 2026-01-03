@@ -1,4 +1,6 @@
 #!/bin/bash
+# Source environment if available
+[[ -f /home/ubuntu/claude-executor/.env ]] && source /home/ubuntu/claude-executor/.env
 # dispatch-aider.sh - Headless Aider executor for Outpost v1.4
 # WORKSPACE ISOLATION: Each run gets its own repo copy
 # v1.4: Security hardening, dynamic branch detection, timeout protection, git init fix
