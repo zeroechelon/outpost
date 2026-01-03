@@ -1,8 +1,6 @@
 #!/bin/bash
-# dispatch-aider.sh - Headless Aider executor for Outpost
+# dispatch-aider.sh - Headless Aider executor for Outpost v1.2
 # Uses DeepSeek API (low-cost, high-quality code model)
-
-set -e
 
 REPO_NAME="${1:-}"
 TASK="${2:-}"
@@ -20,8 +18,10 @@ GITHUB_USER="rgsuarez"
 GITHUB_TOKEN="${GITHUB_TOKEN:-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}"
 
 # Load DeepSeek API key
-source /home/ubuntu/.config/aider/deepseek.env
-export DEEPSEEK_API_KEY
+if [[ -f /home/ubuntu/.config/aider/deepseek.env ]]; then
+    source /home/ubuntu/.config/aider/deepseek.env
+    export DEEPSEEK_API_KEY
+fi
 
 RUN_ID="$(date +%Y%m%d-%H%M%S)-aider-$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
 RUN_DIR="$RUNS_DIR/$RUN_ID"
@@ -35,22 +35,45 @@ echo "Task: $TASK"
 mkdir -p "$RUN_DIR"
 echo "$TASK" > "$RUN_DIR/task.md"
 
+# Initialize output log
+exec > >(tee -a "$RUN_DIR/output.log") 2>&1
+
 mkdir -p "$REPOS_DIR"
 REPO_PATH="$REPOS_DIR/$REPO_NAME"
 
+# Handle repo setup with error handling
 if [[ -d "$REPO_PATH" ]]; then
     echo "📦 Updating existing repo..."
     cd "$REPO_PATH"
-    git fetch origin
-    git reset --hard origin/main
+    if ! git fetch origin 2>&1; then
+        echo "⚠️ Git fetch failed - continuing with local state"
+    fi
+    if ! git reset --hard origin/main 2>&1; then
+        echo "⚠️ Git reset failed - continuing with current HEAD"
+    fi
 else
     echo "📦 Cloning repo..."
     cd "$REPOS_DIR"
-    git clone "https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/${GITHUB_USER}/${REPO_NAME}.git"
+    if ! git clone "https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/${GITHUB_USER}/${REPO_NAME}.git" 2>&1; then
+        echo "❌ Git clone failed - repo may not exist"
+        cat > "$RUN_DIR/summary.json" << SUMMARY
+{
+  "run_id": "$RUN_ID",
+  "repo": "$REPO_NAME",
+  "executor": "aider",
+  "model": "deepseek/deepseek-coder",
+  "completed": "$(date -Iseconds)",
+  "status": "failed",
+  "exit_code": 1,
+  "error": "git clone failed - repo may not exist on GitHub"
+}
+SUMMARY
+        exit 1
+    fi
 fi
 
 cd "$REPO_PATH"
-BEFORE_SHA=$(git rev-parse HEAD)
+BEFORE_SHA=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
 echo "Before SHA: $BEFORE_SHA"
 
 echo "🤖 Running Aider (DeepSeek Coder)..."
@@ -63,16 +86,15 @@ export HOME=/home/ubuntu
     --model deepseek/deepseek-coder \
     --yes-always \
     --no-git \
-    --message "$TASK" 2>&1 | tee "$RUN_DIR/output.log"
+    --message "$TASK" 2>&1
+EXIT_CODE=$?
 
-EXIT_CODE=${PIPESTATUS[0]}
-
-AFTER_SHA=$(git rev-parse HEAD)
-if [[ "$BEFORE_SHA" != "$AFTER_SHA" ]]; then
-    git diff "$BEFORE_SHA" "$AFTER_SHA" > "$RUN_DIR/diff.patch"
+AFTER_SHA=$(git rev-parse HEAD 2>/dev/null || echo "$BEFORE_SHA")
+if [[ "$BEFORE_SHA" != "$AFTER_SHA" && "$BEFORE_SHA" != "unknown" ]]; then
+    git diff "$BEFORE_SHA" "$AFTER_SHA" > "$RUN_DIR/diff.patch" 2>/dev/null
     CHANGES="committed"
 else
-    git diff > "$RUN_DIR/diff.patch"
+    git diff > "$RUN_DIR/diff.patch" 2>/dev/null
     if [[ -s "$RUN_DIR/diff.patch" ]]; then
         CHANGES="uncommitted"
     else
