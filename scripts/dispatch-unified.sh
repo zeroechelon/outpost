@@ -1,14 +1,11 @@
 #!/bin/bash
-# dispatch-unified.sh - Unified multi-agent dispatcher for Outpost v1.2
-# Enables single, multiple, or all-agent execution from one command
-
-# Don't use set -e globally - handle errors explicitly
+# dispatch-unified.sh - Unified multi-agent dispatcher for Outpost v1.3
+# WORKSPACE ISOLATION: Each agent gets its own repo copy - true parallelism
 
 REPO_NAME="${1:-}"
 TASK="${2:-}"
-EXECUTOR="${3:---executor=claude}"  # Default to claude
+EXECUTOR="${3:---executor=claude}"
 
-# Parse --executor flag
 if [[ "$EXECUTOR" == --executor=* ]]; then
     EXECUTORS="${EXECUTOR#--executor=}"
 elif [[ "$3" == "--executor" ]]; then
@@ -20,61 +17,65 @@ fi
 if [[ -z "$REPO_NAME" || -z "$TASK" ]]; then
     echo "Usage: dispatch-unified.sh <repo-name> \"<task>\" --executor=<agent(s)>"
     echo ""
-    echo "Executors:"
-    echo "  claude    - Claude Code (Opus 4.5)"
-    echo "  codex     - OpenAI Codex (GPT-5.2)"
-    echo "  gemini    - Gemini CLI (Gemini 3 Pro)"
-    echo "  aider     - Aider (DeepSeek Coder)"
-    echo "  all       - All four agents in parallel"
+    echo "Executors: claude | codex | gemini | aider | all"
+    echo "Multiple: --executor=claude,gemini,aider"
     echo ""
-    echo "Multiple agents: --executor=claude,gemini,aider"
-    echo ""
-    echo "Examples:"
-    echo "  dispatch-unified.sh soc-reborn \"count files\" --executor=claude"
-    echo "  dispatch-unified.sh soc-reborn \"count files\" --executor=claude,aider"
-    echo "  dispatch-unified.sh soc-reborn \"count files\" --executor=all"
+    echo "v1.3: Workspace isolation - true parallel execution"
     exit 1
 fi
 
 EXECUTOR_DIR="/home/ubuntu/claude-executor"
+REPOS_DIR="$EXECUTOR_DIR/repos"
+GITHUB_USER="rgsuarez"
+GITHUB_TOKEN="${GITHUB_TOKEN:-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}"
+
 BATCH_ID="$(date +%Y%m%d-%H%M%S)-batch-$(head /dev/urandom | tr -dc a-z0-9 | head -c 4)"
 
 echo "═══════════════════════════════════════════════════════════════"
-echo "🚀 OUTPOST UNIFIED DISPATCH"
+echo "🚀 OUTPOST UNIFIED DISPATCH v1.3"
 echo "═══════════════════════════════════════════════════════════════"
 echo "Batch ID:   $BATCH_ID"
 echo "Repo:       $REPO_NAME"
 echo "Task:       $TASK"
 echo "Executors:  $EXECUTORS"
+echo "Isolation:  ENABLED (each agent gets own workspace)"
 echo "═══════════════════════════════════════════════════════════════"
 
-# Expand "all" to full list
-if [[ "$EXECUTORS" == "all" ]]; then
-    EXECUTORS="claude,codex,gemini,aider"
-fi
+[[ "$EXECUTORS" == "all" ]] && EXECUTORS="claude,codex,gemini,aider"
 
-# Track PIDs for parallel execution
+# === PRE-FLIGHT: Update shared cache ONCE ===
+SOURCE_REPO="$REPOS_DIR/$REPO_NAME"
+echo ""
+echo "📦 Pre-flight: Updating shared cache..."
+
+if [[ ! -d "$SOURCE_REPO" ]]; then
+    echo "   Cloning from GitHub..."
+    mkdir -p "$REPOS_DIR"
+    git clone "https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/${GITHUB_USER}/${REPO_NAME}.git" "$SOURCE_REPO" 2>&1 || {
+        echo "❌ Failed to clone repo - aborting"
+        exit 1
+    }
+else
+    echo "   Fetching latest..."
+    (cd "$SOURCE_REPO" && git fetch origin && git reset --hard origin/main) 2>&1 || echo "   ⚠️ Fetch failed - using existing"
+fi
+echo "   Cache ready: $(cd "$SOURCE_REPO" && git rev-parse --short HEAD)"
+
+# Export flag so individual dispatchers skip cache update
+export OUTPOST_CACHE_READY=1
+
 declare -a PIDS
 declare -a AGENTS
 
-# Function to dispatch to a single agent
 dispatch_agent() {
     local agent=$1
     local script=""
     
     case $agent in
-        claude)
-            script="dispatch.sh"
-            ;;
-        codex)
-            script="dispatch-codex.sh"
-            ;;
-        gemini)
-            script="dispatch-gemini.sh"
-            ;;
-        aider)
-            script="dispatch-aider.sh"
-            ;;
+        claude) script="dispatch.sh" ;;
+        codex)  script="dispatch-codex.sh" ;;
+        gemini) script="dispatch-gemini.sh" ;;
+        aider)  script="dispatch-aider.sh" ;;
         *)
             echo "❌ Unknown executor: $agent"
             return 1
@@ -82,22 +83,16 @@ dispatch_agent() {
     esac
     
     echo "📤 Dispatching to $agent..."
-    # Run with error capture - don't let failures propagate
-    "$EXECUTOR_DIR/$script" "$REPO_NAME" "$TASK" 2>&1 || {
-        echo "⚠️ $agent dispatch returned non-zero exit code"
-    }
+    "$EXECUTOR_DIR/$script" "$REPO_NAME" "$TASK" 2>&1 || echo "⚠️ $agent returned non-zero"
 }
 
-# Split executors by comma and run
 IFS=',' read -ra AGENT_ARRAY <<< "$EXECUTORS"
 
 if [[ ${#AGENT_ARRAY[@]} -eq 1 ]]; then
-    # Single agent - run synchronously
     dispatch_agent "${AGENT_ARRAY[0]}"
 else
-    # Multiple agents - run in parallel
     echo ""
-    echo "🔀 Parallel execution mode (${#AGENT_ARRAY[@]} agents)"
+    echo "🔀 Parallel execution (${#AGENT_ARRAY[@]} agents, isolated workspaces)"
     echo ""
     
     for agent in "${AGENT_ARRAY[@]}"; do
@@ -106,28 +101,18 @@ else
         AGENTS+=("$agent")
     done
     
-    # Wait for all to complete
     echo ""
-    echo "⏳ Waiting for all agents to complete..."
+    echo "⏳ Waiting for all agents..."
     
     FAILED=0
     for i in "${!PIDS[@]}"; do
-        if wait "${PIDS[$i]}"; then
-            echo "✅ ${AGENTS[$i]} completed"
-        else
-            echo "❌ ${AGENTS[$i]} failed"
-            FAILED=$((FAILED + 1))
-        fi
+        wait "${PIDS[$i]}" && echo "✅ ${AGENTS[$i]} completed" || { echo "❌ ${AGENTS[$i]} failed"; FAILED=$((FAILED + 1)); }
     done
     
     echo ""
     echo "═══════════════════════════════════════════════════════════════"
     echo "📊 BATCH COMPLETE: $BATCH_ID"
     echo "═══════════════════════════════════════════════════════════════"
-    echo "Agents run: ${#AGENT_ARRAY[@]}"
-    echo "Succeeded:  $((${#AGENT_ARRAY[@]} - FAILED))"
-    echo "Failed:     $FAILED"
-    echo ""
-    echo "View results: ls -la $EXECUTOR_DIR/runs/ | tail -${#AGENT_ARRAY[@]}"
+    echo "Agents: ${#AGENT_ARRAY[@]} | Succeeded: $((${#AGENT_ARRAY[@]} - FAILED)) | Failed: $FAILED"
     echo "═══════════════════════════════════════════════════════════════"
 fi
