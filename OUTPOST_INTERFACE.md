@@ -1,4 +1,4 @@
-# Outpost Interface Specification v1.0
+# Outpost Interface Specification v1.1
 
 > **Cross-Project API Contract for Multi-Agent Dispatch**
 
@@ -28,7 +28,7 @@ aws ssm send-command \
   --output text
 ```
 
-**Agents:** `claude` | `codex` | `gemini`
+**Agents:** `claude` | `codex` | `gemini` | `aider`
 
 ### All Agents (Parallel)
 
@@ -56,13 +56,15 @@ aws ssm get-command-invocation \
 
 ## Fleet Configuration
 
-| Agent | Model | Strengths |
-|-------|-------|-----------|
-| `claude` | claude-opus-4-5-20251101 | Complex reasoning, architecture, multi-file changes |
-| `codex` | gpt-5.2-codex | Code generation, refactoring, test writing |
-| `gemini` | gemini-3-pro-preview | Analysis, documentation, broad context |
+| Agent | Model | Cost | Strengths |
+|-------|-------|------|-----------|
+| `claude` | claude-opus-4-5-20251101 | $100/mo | Complex reasoning, architecture, multi-file changes |
+| `codex` | gpt-5.2-codex | $20/mo | Code generation, refactoring, test writing |
+| `gemini` | gemini-3-pro-preview | $50/mo | Analysis, documentation, broad context |
+| `aider` | deepseek/deepseek-coder | ~$0.14/MTok | Low-cost, high-quality code, iterative editing |
 
-**Cost:** $170/mo total (subscription-based, zero API charges)
+**Subscription Agents:** $170/mo total (claude + codex + gemini)
+**API Agent:** Aider uses DeepSeek API (pay-per-use, extremely cheap)
 
 ---
 
@@ -73,13 +75,14 @@ aws ssm get-command-invocation \
 --executor=claude
 --executor=codex
 --executor=gemini
+--executor=aider
 ```
 
 ### Pattern 2: Multiple Specific Agents
 ```bash
 --executor=claude,gemini
---executor=codex,gemini
---executor=claude,codex
+--executor=codex,aider
+--executor=claude,codex,aider
 ```
 
 ### Pattern 3: All Agents (Consensus/Comparison)
@@ -97,7 +100,8 @@ aws ssm get-command-invocation \
 | Need second opinion | `--executor=claude,codex` |
 | Consensus (high confidence) | `--executor=all` |
 | Documentation task | `--executor=gemini` |
-| Race for fastest | `--executor=all` |
+| High-volume/cheap queries | `--executor=aider` |
+| Iterative code editing | `--executor=aider` |
 
 ---
 
@@ -115,10 +119,10 @@ runs/<run-id>/
 ### summary.json Schema
 ```json
 {
-  "run_id": "20260103-001234-gemini-abc123",
+  "run_id": "20260103-001234-aider-abc123",
   "repo": "repo-name",
-  "executor": "gemini",
-  "model": "gemini-3-pro-preview",
+  "executor": "aider",
+  "model": "deepseek/deepseek-coder",
   "completed": "2026-01-03T00:12:34Z",
   "status": "success",
   "exit_code": 0,
@@ -148,7 +152,7 @@ aws ssm send-command \
 ```python
 # In a Geaux File session, Claude can:
 
-# 1. Ask all 3 agents the same question
+# 1. Ask all 4 agents the same question
 task = "Review the customer onboarding flow and suggest improvements"
 repo = "geauxfile-website"
 
@@ -184,7 +188,11 @@ AWS_SECRET_ACCESS_KEY: [In richie profile preferences]
 
 ## Version
 
-**Outpost v1.0** — Three-agent fleet for multi-model orchestration
+**Outpost v1.1** — Four-agent fleet for multi-model orchestration
+
+### Changelog
+- v1.0: Initial release (3 agents: Claude, Codex, Gemini)
+- v1.1: Added Aider with DeepSeek Coder backend
 
 ---
 
