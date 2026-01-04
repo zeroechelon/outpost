@@ -1,15 +1,9 @@
 #!/bin/bash
-# dispatch-aider.sh - Aider dispatcher for Outpost
-#
-# Usage: dispatch-aider.sh <repo-name> "<task>"
-
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUTPOST_DIR="${OUTPOST_DIR:-$(dirname "$SCRIPT_DIR")}"
-
-# Load environment
-[[ -f "$OUTPOST_DIR/.env" ]] && source "$OUTPOST_DIR/.env"
+# Source environment if available
+[[ -f ${OUTPOST_DIR:-/opt/outpost}/.env ]] && source ${OUTPOST_DIR:-/opt/outpost}/.env
+# dispatch-aider.sh - Headless Aider executor for Outpost v1.4
+# WORKSPACE ISOLATION: Each run gets its own repo copy
+# v1.4: Security hardening, dynamic branch detection, timeout protection, git init fix
 
 REPO_NAME="${1:-}"
 TASK="${2:-}"
@@ -19,111 +13,107 @@ if [[ -z "$REPO_NAME" || -z "$TASK" ]]; then
     exit 1
 fi
 
-# Configuration
-REPOS_DIR="$OUTPOST_DIR/repos"
-RUNS_DIR="$OUTPOST_DIR/runs"
-RUN_ID="$(date +%Y%m%d-%H%M%S)-aider-$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
-RUN_DIR="$RUNS_DIR/$RUN_ID"
-TIMEOUT="${AGENT_TIMEOUT:-600}"
-MODEL="${AIDER_MODEL:-deepseek/deepseek-coder}"
-
-echo "🚀 Aider dispatch starting..."
-echo "Run ID: $RUN_ID"
-echo "Model: $MODEL"
-echo "Repo: $REPO_NAME"
-echo "Task: ${TASK:0:80}..."
-echo ""
-
-# Create run directory
-mkdir -p "$RUN_DIR"
-
-# Write initial status
-cat > "$RUN_DIR/summary.json" << EOF
-{
-  "run_id": "$RUN_ID",
-  "repo": "$REPO_NAME",
-  "executor": "aider",
-  "model": "$MODEL",
-  "started": "$(date -Iseconds)",
-  "status": "running"
-}
-EOF
-
-# Save task
-echo "$TASK" > "$RUN_DIR/task.md"
-
-# Create isolated workspace
-SOURCE_REPO="$REPOS_DIR/$REPO_NAME"
-WORKSPACE="$RUN_DIR/workspace"
-
-if [[ -d "$SOURCE_REPO" ]]; then
-    echo "📦 Creating isolated workspace..."
-    cp -r "$SOURCE_REPO" "$WORKSPACE"
-    cd "$WORKSPACE"
-    BEFORE_SHA=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
-    echo "Workspace SHA: $BEFORE_SHA"
-else
-    echo "❌ Repository not found: $SOURCE_REPO"
+if [[ -z "$GITHUB_TOKEN" ]]; then
+    echo "❌ FATAL: GITHUB_TOKEN environment variable not set"
     exit 1
 fi
 
-# Set API key for Aider
-if [[ -n "${DEEPSEEK_API_KEY:-}" ]]; then
-    export DEEPSEEK_API_KEY
-elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
-    export OPENAI_API_KEY
-    MODEL="${AIDER_MODEL:-gpt-4o}"
+EXECUTOR_DIR="${OUTPOST_DIR:-/opt/outpost}"
+REPOS_DIR="$EXECUTOR_DIR/repos"
+RUNS_DIR="$EXECUTOR_DIR/runs"
+AIDER_ENV="/home/ubuntu/aider-env/bin"
+GITHUB_USER="${GITHUB_USER:-}"
+AGENT_TIMEOUT="${AGENT_TIMEOUT:-600}"
+
+# Load DeepSeek API key
+if [[ -f /home/ubuntu/.deepseek_key ]]; then
+    export DEEPSEEK_API_KEY=$(cat /home/ubuntu/.deepseek_key)
 fi
 
-# Run Aider
-echo "🤖 Running Aider ($MODEL)..."
-{
-    timeout "$TIMEOUT" aider --model "$MODEL" --yes-always --no-git --message "$TASK" 2>&1 || {
-        EXIT_CODE=$?
-        if [[ $EXIT_CODE -eq 124 ]]; then
-            echo "⚠️ Timeout after ${TIMEOUT}s"
+RUN_ID="$(date +%Y%m%d-%H%M%S)-aider-$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
+RUN_DIR="$RUNS_DIR/$RUN_ID"
+WORKSPACE="$RUN_DIR/workspace"
+
+echo "🚀 Aider dispatch starting..."
+echo "Run ID: $RUN_ID"
+echo "Model: deepseek/deepseek-coder"
+echo "Repo: $REPO_NAME"
+echo "Task: $TASK"
+
+mkdir -p "$RUN_DIR"
+echo "$TASK" > "$RUN_DIR/task.md"
+
+cat > "$RUN_DIR/summary.json" << SUMMARY
+{"run_id":"$RUN_ID","repo":"$REPO_NAME","executor":"aider","model":"deepseek/deepseek-coder","started":"$(date -Iseconds)","status":"running"}
+SUMMARY
+
+exec > >(tee -a "$RUN_DIR/output.log") 2>&1
+
+SOURCE_REPO="$REPOS_DIR/$REPO_NAME"
+
+if [[ -z "$OUTPOST_CACHE_READY" ]]; then
+    if [[ ! -d "$SOURCE_REPO" ]]; then
+        echo "📦 Initial clone from GitHub..."
+        mkdir -p "$REPOS_DIR"
+        if ! git clone "https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/${GITHUB_USER}/${REPO_NAME}.git" "$SOURCE_REPO" 2>&1; then
+            echo "❌ Git clone failed"
+            cat > "$RUN_DIR/summary.json" << SUMMARY
+{"run_id":"$RUN_ID","repo":"$REPO_NAME","executor":"aider","status":"failed","error":"git clone failed"}
+SUMMARY
+            exit 1
         fi
-        exit $EXIT_CODE
-    }
-} | tee "$RUN_DIR/output.log"
-
-EXIT_CODE=${PIPESTATUS[0]}
-
-# Check for changes
-cd "$WORKSPACE"
-AFTER_SHA=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
-
-if [[ "$BEFORE_SHA" != "$AFTER_SHA" ]]; then
-    CHANGES="committed"
-    git diff "$BEFORE_SHA" "$AFTER_SHA" > "$RUN_DIR/diff.patch" 2>/dev/null || true
-elif [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
-    CHANGES="uncommitted"
-    git diff > "$RUN_DIR/diff.patch" 2>/dev/null || true
+    fi
+    echo "📦 Updating cache..."
+    cd "$SOURCE_REPO"
+    git fetch origin 2>&1
+    DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+    DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
+    git reset --hard "origin/$DEFAULT_BRANCH" 2>&1 || echo "⚠️ Cache update failed"
 else
-    CHANGES="none"
+    echo "📦 Using pre-warmed cache"
 fi
 
-# Update summary
-cat > "$RUN_DIR/summary.json" << EOF
-{
-  "run_id": "$RUN_ID",
-  "repo": "$REPO_NAME",
-  "executor": "aider",
-  "model": "$MODEL",
-  "started": "$(date -Iseconds)",
-  "completed": "$(date -Iseconds)",
-  "status": "$([ $EXIT_CODE -eq 0 ] && echo 'success' || echo 'failed')",
-  "exit_code": $EXIT_CODE,
-  "before_sha": "$BEFORE_SHA",
-  "after_sha": "$AFTER_SHA",
-  "changes": "$CHANGES",
-  "workspace": "$WORKSPACE"
-}
-EOF
+echo "📂 Creating isolated workspace..."
+mkdir -p "$WORKSPACE"
+rsync -a --delete "$SOURCE_REPO/" "$WORKSPACE/"
+
+cd "$WORKSPACE"
+
+# B1 FIX: Ensure git is properly initialized for Aider
+git config --global --add safe.directory "$WORKSPACE" 2>/dev/null || true
+
+BEFORE_SHA=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+echo "Workspace SHA: $BEFORE_SHA"
+
+echo "🤖 Running Aider (DeepSeek Coder)..."
+export HOME=/home/ubuntu
+
+# B1 FIX: Run aider with explicit git repo flag
+timeout "$AGENT_TIMEOUT" "$AIDER_ENV/aider" \
+    --model deepseek/deepseek-coder \
+    --no-auto-commits \
+    --yes-always \
+    --message "$TASK" 2>&1
+EXIT_CODE=$?
+
+[[ $EXIT_CODE -eq 124 ]] && STATUS="timeout" || { [[ $EXIT_CODE -eq 0 ]] && STATUS="success" || STATUS="failed"; }
+
+AFTER_SHA=$(git rev-parse HEAD 2>/dev/null || echo "$BEFORE_SHA")
+if [[ "$BEFORE_SHA" != "$AFTER_SHA" && "$BEFORE_SHA" != "unknown" ]]; then
+    git diff "$BEFORE_SHA" "$AFTER_SHA" > "$RUN_DIR/diff.patch" 2>/dev/null
+    CHANGES="committed"
+else
+    git diff > "$RUN_DIR/diff.patch" 2>/dev/null
+    [[ -s "$RUN_DIR/diff.patch" ]] && CHANGES="uncommitted" || CHANGES="none"
+fi
+
+cat > "$RUN_DIR/summary.json" << SUMMARY
+{"run_id":"$RUN_ID","repo":"$REPO_NAME","executor":"aider","model":"deepseek/deepseek-coder","completed":"$(date -Iseconds)","status":"$STATUS","exit_code":$EXIT_CODE,"before_sha":"$BEFORE_SHA","after_sha":"$AFTER_SHA","changes":"$CHANGES","workspace":"$WORKSPACE"}
+SUMMARY
 
 echo ""
 echo "✅ Aider dispatch complete"
 echo "Run ID: $RUN_ID"
-echo "Status: $([ $EXIT_CODE -eq 0 ] && echo 'success' || echo 'failed')"
+echo "Status: $STATUS"
 echo "Changes: $CHANGES"
 echo "Workspace: $WORKSPACE"
