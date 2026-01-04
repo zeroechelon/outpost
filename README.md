@@ -2,18 +2,31 @@
 
 > Multi-agent coding executor. Dispatch tasks to Claude, Codex, Gemini, and Aider in parallel.
 
-## Quick Start
+## One-Line Install
 
 ```bash
-# On your Linux or macOS server
-sudo mkdir -p /opt/outpost && sudo chown $USER:$USER /opt/outpost
-cd /opt/outpost
-git clone https://github.com/zeroechelon/outpost.git .
-cp .env.template .env
-nano .env  # Add GITHUB_TOKEN, GITHUB_USER, and at least one agent key
-chmod +x scripts/*.sh
-./scripts/setup-agents.sh
-./scripts/dispatch-unified.sh <your-repo> "Add README" --executor=aider
+curl -sSL https://raw.githubusercontent.com/zeroechelon/outpost/main/install.sh | bash
+```
+
+**Unattended install** (for AI agents):
+```bash
+GITHUB_TOKEN=ghp_xxx GITHUB_USER=myuser DEEPSEEK_API_KEY=sk-xxx OUTPOST_UNATTENDED=1 \
+  curl -sSL https://raw.githubusercontent.com/zeroechelon/outpost/main/install.sh | bash
+```
+
+## Quick Start
+
+After install:
+
+```bash
+# Configure credentials
+outpost config
+
+# Install agent CLIs
+outpost setup
+
+# Run your first dispatch
+outpost dispatch <your-repo> "Add a README" --executor=aider
 ```
 
 ## Agents
@@ -25,24 +38,45 @@ chmod +x scripts/*.sh
 | `codex` | `OPENAI_API_KEY` | $20/mo or ~$10/MTok |
 | `gemini` | `GOOGLE_API_KEY` | Free tier available |
 
-## Documentation
-
-- [Server Setup](docs/SETUP_SERVER.md) — Install on Linux/macOS
-- [Agent Setup](docs/SETUP_AGENTS.md) — Configure API keys and OAuth
-- [Context Injection](docs/CONTEXT_INJECTION_SPEC.md) — Enhanced with zeOS
-
 ## Usage
 
 ```bash
 # Single agent
-./scripts/dispatch-unified.sh <repo> "<task>" --executor=aider
+outpost dispatch <repo> "<task>" --executor=aider
 
-# Multiple agents
-./scripts/dispatch-unified.sh <repo> "<task>" --executor=claude,aider
+# Multiple agents in parallel
+outpost dispatch <repo> "<task>" --executor=claude,aider
+
+# All agents
+outpost dispatch <repo> "<task>" --executor=all
 
 # With context injection
-./scripts/dispatch-unified.sh <repo> "<task>" --executor=claude --context
+outpost dispatch <repo> "<task>" --executor=claude --context
 ```
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `outpost dispatch` | Run task on agent(s) |
+| `outpost list` | Show recent runs |
+| `outpost promote` | Push changes to GitHub |
+| `outpost setup` | Install agent CLIs |
+| `outpost config` | Edit credentials |
+| `outpost update` | Update Outpost |
+
+## Documentation
+
+- [Server Setup](docs/SETUP_SERVER.md) — Manual install on Linux/macOS
+- [Agent Setup](docs/SETUP_AGENTS.md) — Configure API keys and OAuth
+- [Context Injection](docs/CONTEXT_INJECTION_SPEC.md) — Enhanced with zeOS
+
+## Requirements
+
+- Linux or macOS
+- git, curl, bash
+- GitHub PAT with repo access
+- At least one agent credential
 
 ## License
 
@@ -51,4 +85,8 @@ MIT — See [LICENSE](LICENSE)
 ## Related
 
 - [zeOS](https://github.com/rgsuarez/zeOS) — Enhanced context injection
+
+---
+
+*Outpost v1.5.0*
 
