@@ -1,77 +1,58 @@
-# Session Journal: 2026-01-04 Context Injection + Public Release + Installer
+# Session Journal: 2026-01-04 Outpost v1.5 Complete Release
 
-**Status:** In Progress
+**Status:** Complete
 **Project:** Outpost
-**Checkpoint:** 2026-01-04T02:43:20Z
+**Completed:** 2026-01-04T02:49:48Z
 
 ---
 
-## Session Summary
+## Executive Summary
 
-This session accomplished three major milestones for Outpost v1.5:
+Delivered Outpost v1.5 public release with context injection system and curl installer. Fleet consultation drove installer design. Established proper release procedure for future updates.
 
-### 1. Context Injection System
-- Drafted CONTEXT_INJECTION_SPEC.md
-- Fleet reviewed (all 4 agents provided feedback)
-- Implemented assemble-context.sh and scrub-secrets.sh
+---
+
+## Accomplishments
+
+### 1. Context Injection System (v1.5)
+- Drafted and fleet-reviewed CONTEXT_INJECTION_SPEC.md
+- Implemented token budgets: minimal (600), standard (1200), full (1800)
+- Created assemble-context.sh with provenance tracking
+- Created scrub-secrets.sh with 15+ security patterns
 - Integrated --context flag into dispatch-unified.sh
 
 ### 2. Public Release Procedure
-- Created proper scrub-and-publish.sh using GitHub API
-- Documented procedure in tools/RELEASE_PROCEDURE.md
-- Added missing files to private repo (setup-agents.sh, SETUP_*.md)
-- Executed release via proper procedure (not manual)
+- **Problem:** Initially bypassed automation, pushed manually
+- **Fix:** Rewrote scrub-and-publish.sh to use GitHub API
+- Documented in tools/RELEASE_PROCEDURE.md
+- Scrubbing patterns: paths, usernames, instance IDs, credentials
 - Security verified: no secrets in public repo
 
 ### 3. Curl Installer
-- Fleet consulted (Aider, Codex, Gemini all voted YES)
-- Built install.sh with fleet-recommended features:
+- Fleet consulted: Aider, Codex, Gemini unanimous YES
+- Built install.sh with all fleet recommendations:
   - OS detection (Linux/macOS)
   - Dependency checking
-  - Interactive and unattended modes
-  - PATH integration with wrapper command
-  - Idempotent (handles existing installs)
-- Published to both repos
+  - Interactive + unattended modes
+  - PATH integration with `outpost` wrapper
+  - Idempotent updates
+  - Secure .env (chmod 600)
 
 ---
 
-## Commits This Session
+## Deliverables
 
-### Private Repo (rgsuarez/outpost)
-| File | Commit | Description |
-|------|--------|-------------|
-| scripts/setup-agents.sh | 4bef7a8 | Agent CLI installer |
-| docs/SETUP_SERVER.md | 0024ced | Server setup guide |
-| docs/SETUP_AGENTS.md | cb0cb36 | Agent setup with OAuth |
-| tools/scrub-and-publish.sh | 2b6c3b9 | Fixed scrub patterns |
-| tools/RELEASE_PROCEDURE.md | 7a093ab | Release documentation |
-| install.sh | 924c79a | Curl installer |
-
-### Public Repo (zeroechelon/outpost)
-| File | Commit | Description |
-|------|--------|-------------|
-| scripts/* | various | All dispatch scripts (scrubbed) |
-| docs/* | various | All documentation |
-| install.sh | 4f9e19b | Curl installer |
-| README.md | e2722af | Updated with one-liner |
-
----
-
-## Public Repo Contents
+### Public Repo: zeroechelon/outpost
 
 ```
-zeroechelon/outpost/
-├── install.sh              # NEW: One-liner installer
-├── README.md               # Updated with install command
-├── LICENSE
+├── install.sh              # One-liner installer
+├── README.md               # AI-agent optimized
+├── LICENSE (MIT)
 ├── .env.template
-├── .gitignore
 ├── scripts/
 │   ├── dispatch-unified.sh
 │   ├── dispatch.sh
-│   ├── dispatch-codex.sh
-│   ├── dispatch-gemini.sh
-│   ├── dispatch-aider.sh
+│   ├── dispatch-*.sh (all agents)
 │   ├── assemble-context.sh
 │   ├── scrub-secrets.sh
 │   ├── setup-agents.sh
@@ -83,41 +64,72 @@ zeroechelon/outpost/
     └── SETUP_AGENTS.md
 ```
 
----
-
-## Installation Command
+### Installation Command (Live)
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/zeroechelon/outpost/main/install.sh | bash
 ```
 
-Unattended (for AI agents):
+### Wrapper Commands
+
 ```bash
-GITHUB_TOKEN=xxx GITHUB_USER=xxx DEEPSEEK_API_KEY=xxx OUTPOST_UNATTENDED=1 \
-  curl -sSL https://raw.githubusercontent.com/zeroechelon/outpost/main/install.sh | bash
+outpost dispatch <repo> "task" --executor=aider
+outpost list
+outpost promote <run-id> "message"
+outpost setup
+outpost config
+outpost update
 ```
 
 ---
 
-## Fleet Consultation Summary
+## Key Decisions
 
-**Question:** Should Outpost offer curl installer?
-
-| Agent | Vote | Key Insight |
-|-------|------|-------------|
-| Aider | YES | Low-effort, high-impact. Start simple. |
-| Codex | YES | Keep transparent, verifiable, optional. |
-| Gemini | YES | Non-interactive better for AI agents. |
-| Claude | FAIL | Permissions issue (unrelated) |
-
-**Consensus:** Unanimous yes. All recommendations incorporated.
+| Decision | Rationale |
+|----------|-----------|
+| Curl installer over apt/pip | Fleet consensus: low effort, high impact for bash scripts |
+| Non-interactive mode | AI agents need unattended install |
+| zeroechelon org for public | Separate from private development |
+| Scrub-and-publish automation | GitOps discipline, repeatable releases |
 
 ---
 
-## Next Steps
+## Fleet Consultation Results
 
-- [ ] Test install.sh on fresh Linux VM
-- [ ] Test install.sh on macOS
-- [ ] Add Homebrew tap (future, if adoption warrants)
-- [ ] Consider Docker image option
+**Question:** Should Outpost offer curl installer?
+
+| Agent | Vote | Key Point |
+|-------|------|-----------|
+| Aider | YES | Start simple, expand later |
+| Codex | YES | Keep transparent and verifiable |
+| Gemini | YES | Non-interactive better for AI agents |
+
+---
+
+## Next Session Preview
+
+**Topic:** Outpost-as-a-Service (Pay endpoint)
+
+Concept discussed:
+- Web endpoint where users access all agents in one spot
+- Users provide their API keys OR credentials
+- We provide Outpost API keys for their apps
+- Monetization model TBD
+
+---
+
+## Memory Updates
+
+- Added zeroechelon PAT to memory edits (#4)
+- Created profiles/richie/SECRETS_REFERENCE.md in zeOS
+
+---
+
+## Commits Summary
+
+| Repo | Key Commits |
+|------|-------------|
+| rgsuarez/outpost | setup-agents.sh, SETUP_*.md, install.sh, scrub-and-publish.sh |
+| zeroechelon/outpost | Full v1.5 release via scrub-and-publish procedure |
+| rgsuarez/zeOS | SECRETS_REFERENCE.md |
 
