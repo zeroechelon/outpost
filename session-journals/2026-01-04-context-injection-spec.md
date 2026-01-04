@@ -2,7 +2,7 @@
 
 **Status:** Complete
 **Project:** Outpost
-**Timestamp:** 2026-01-04T00:03:59Z
+**Timestamp:** 2026-01-04T00:31:03Z
 
 ---
 
@@ -10,62 +10,71 @@
 
 ### Context Injection System (v1.5)
 - Drafted and fleet-reviewed CONTEXT_INJECTION_SPEC.md
-- Implemented all fleet recommendations (token budgets, ANCHORS, provenance, security)
-- Created assemble-context.sh and scrub-secrets.sh
-- Updated dispatch-unified.sh with --context flag
-- Updated all documentation to v1.5
+- Implemented all fleet recommendations
+- Created context injection scripts
 
-### Public Release (zeroechelon/outpost)
-- Created generalized public version with no hardcoded values
-- Wrote comprehensive AI-agent-optimized README with:
-  - Step-by-step Aider/DeepSeek setup (cheapest option)
-  - OAuth and API key instructions for all 4 agents
-  - Linux AND macOS support documented
-- Published to https://github.com/zeroechelon/outpost
+### Public Release Procedure (FIXED)
+- Created proper scrub-and-publish.sh that uses GitHub API
+- Documented procedure in tools/RELEASE_PROCEDURE.md
+- Added missing files to private repo:
+  - scripts/setup-agents.sh
+  - docs/SETUP_SERVER.md
+  - docs/SETUP_AGENTS.md
 
-### PAT Management
-- Saved zeroechelon org PAT reference in zeOS profile
-- Added memory edit for PAT usage pattern
-- Created SECRETS_REFERENCE.md documenting credential locations
+### Executed Release Procedure
+- Dry run verified scrubbing correctness
+- Fixed scrub patterns for GITHUB_USER and auto-sync URL
+- Successfully published to zeroechelon/outpost
 
 ---
 
-## Files Published to zeroechelon/outpost
+## Files in Public Repo (zeroechelon/outpost)
 
-| File | Commit | Description |
-|------|--------|-------------|
-| README.md | ce16e0e | AI-agent optimized setup guide |
-| LICENSE | 84183c7 | MIT License |
-| .env.template | 2e18adc | Environment configuration |
-| .gitignore | a414dba | Ignore patterns |
-| scripts/dispatch-unified.sh | 8733dfb | Main dispatcher |
-| scripts/dispatch.sh | 96d8778 | Claude Code agent |
-| scripts/dispatch-aider.sh | 95de7fb | Aider agent |
-| scripts/setup-agents.sh | c9de611 | Agent installer |
-| scripts/assemble-context.sh | 4b44e58 | Context injection |
-| scripts/scrub-secrets.sh | 084c3f7 | Security scrubbing |
+### Root
+- README.md (AI-agent optimized)
+- LICENSE (MIT)
+- .env.template
+- .gitignore
+
+### scripts/
+- dispatch-unified.sh
+- dispatch.sh
+- dispatch-codex.sh
+- dispatch-gemini.sh
+- dispatch-aider.sh
+- assemble-context.sh
+- scrub-secrets.sh
+- setup-agents.sh
+- promote-workspace.sh
+- list-runs.sh
+
+### docs/
+- CONTEXT_INJECTION_SPEC.md
+- SETUP_SERVER.md
+- SETUP_AGENTS.md
 
 ---
 
-## Key Decisions
+## Security Verification
+- ✅ No secrets in public repo
+- ✅ GITHUB_USER parameterized
+- ✅ Auto-sync URL points to zeroechelon/outpost
+- ✅ All hardcoded paths generalized
 
-1. **zeOS not required** — Outpost works standalone, zeOS enhances context injection
-2. **AWS not required** — Any Linux or macOS server with SSH + sudo works
-3. **Aider recommended** — Cheapest option at ~$0.14/MTok via DeepSeek
-4. **Dual PAT strategy** — rgsuarez PAT for private, zeroechelon PAT for public
+---
+
+## Release Procedure Summary
+
+```bash
+# Future releases:
+export GITHUB_TOKEN="<rgsuarez-pat>"
+export ZEROECHELON_TOKEN="<zeroechelon-pat>"
+./tools/scrub-and-publish.sh --message "v1.x.x release"
+```
 
 ---
 
 ## Public Repo URL
 
 https://github.com/zeroechelon/outpost
-
----
-
-## Next Steps (Future Sessions)
-
-- [ ] Add dispatch-codex.sh and dispatch-gemini.sh to public repo
-- [ ] Create docs/SETUP_SERVER.md for detailed server configuration
-- [ ] Add promote-workspace.sh and list-runs.sh
-- [ ] Test full setup flow on fresh server
 
