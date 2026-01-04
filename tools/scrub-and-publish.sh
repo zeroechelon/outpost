@@ -1,56 +1,65 @@
 #!/bin/bash
-# scrub-and-publish.sh - Extract and publish to public Outpost repo
+# scrub-and-publish.sh - Publish from private repo to public repo via GitHub API
 #
 # This script:
-# 1. Extracts publishable files from the private working repo (rgsuarez/outpost)
-# 2. Scrubs any me-specific values (converts to environment variables)
-# 3. Commits to the public repo (zeroechelon/outpost)
+# 1. Fetches files from rgsuarez/outpost (private)
+# 2. Applies scrubbing (removes hardcoded values)
+# 3. Pushes to zeroechelon/outpost (public)
 #
 # Usage: ./scrub-and-publish.sh [--dry-run] [--message "commit message"]
 #
-# Run from the private repo root or specify PRIVATE_REPO path.
+# Required environment variables:
+#   GITHUB_TOKEN      - PAT for rgsuarez (private repo read)
+#   ZEROECHELON_TOKEN - PAT for zeroechelon (public repo write)
 
 set -euo pipefail
 
-# Configuration
-PRIVATE_REPO="${PRIVATE_REPO:-$(pwd)}"
-PUBLIC_REPO_URL="https://github.com/zeroechelon/outpost.git"
-WORK_DIR="/tmp/outpost-publish-$$"
+# ═══════════════════════════════════════════════════════════════════
+# CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════
+
+PRIVATE_REPO="rgsuarez/outpost"
+PUBLIC_REPO="zeroechelon/outpost"
 DRY_RUN=false
-COMMIT_MSG="Sync from private repo"
+COMMIT_MSG="Sync from private repo $(date +%Y-%m-%d)"
+WORK_DIR="/tmp/outpost-publish-$$"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --dry-run)
-            DRY_RUN=true
-            shift
-            ;;
-        --message)
-            COMMIT_MSG="$2"
-            shift 2
-            ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
+        --dry-run) DRY_RUN=true; shift ;;
+        --message) COMMIT_MSG="$2"; shift 2 ;;
+        *) echo "Unknown: $1"; exit 1 ;;
     esac
 done
+
+# Validate tokens
+if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+    echo "❌ GITHUB_TOKEN not set (needed for private repo)"
+    exit 1
+fi
+
+if [[ -z "${ZEROECHELON_TOKEN:-}" ]]; then
+    echo "❌ ZEROECHELON_TOKEN not set (needed for public repo)"
+    exit 1
+fi
 
 echo "═══════════════════════════════════════════════════════════════"
 echo "🚀 OUTPOST PUBLIC RELEASE"
 echo "═══════════════════════════════════════════════════════════════"
-echo "Private repo: $PRIVATE_REPO"
-echo "Public repo:  $PUBLIC_REPO_URL"
-echo "Dry run:      $DRY_RUN"
+echo "Private: $PRIVATE_REPO"
+echo "Public:  $PUBLIC_REPO"
+echo "Dry run: $DRY_RUN"
+echo "Message: $COMMIT_MSG"
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
+
+mkdir -p "$WORK_DIR"
 
 # ═══════════════════════════════════════════════════════════════════
 # FILES TO PUBLISH
 # ═══════════════════════════════════════════════════════════════════
 
-# These files are copied from private to public
 PUBLISH_FILES=(
     "scripts/dispatch-unified.sh"
     "scripts/dispatch.sh"
@@ -67,92 +76,104 @@ PUBLISH_FILES=(
     "docs/SETUP_AGENTS.md"
 )
 
-# These files are generated fresh for public (not copied)
-GENERATED_FILES=(
-    "README.md"
-    ".env.template"
-    "LICENSE"
-    ".gitignore"
-)
-
-# These are EXCLUDED (never publish)
-EXCLUDE_PATTERNS=(
-    "session-journals/*"
-    ".env"
-    "runs/*"
-    "repos/*"
-    "*.log"
-    "OUTPOST_INTERFACE.md"  # Has me-specific SSM IDs
-)
-
 # ═══════════════════════════════════════════════════════════════════
-# SCRUB PATTERNS
+# HELPER FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════
 
-scrub_file() {
-    local file="$1"
+fetch_file() {
+    local path="$1"
+    curl -s -H "Authorization: token $GITHUB_TOKEN" \
+        "https://api.github.com/repos/$PRIVATE_REPO/contents/$path" | \
+        python3 -c "import json,sys,base64; d=json.load(sys.stdin); print(base64.b64decode(d.get('content','')).decode() if 'content' in d else '')" 2>/dev/null
+}
+
+scrub_content() {
+    local content="$1"
     
-    # Replace hardcoded values with environment variables
-    sed -i \
-        -e 's/rgsuarez/\${GITHUB_USER}/g' \
-        -e 's/mi-0d77bfe39f630bd5c/\${SSM_INSTANCE_ID}/g' \
-        -e 's/mi-0ece7b1a53a67e600/\${SSM_INSTANCE_ID}/g' \
-        -e 's/52\.44\.78\.2/\${OUTPOST_SERVER}/g' \
-        -e 's/311493921645/\${AWS_ACCOUNT_ID}/g' \
-        -e 's/535471339422/\${AWS_ACCOUNT_ID}/g' \
-        -e 's|/home/ubuntu/claude-executor|/opt/outpost|g' \
-        "$file"
+    # Path generalization
+    content=$(echo "$content" | sed 's|/home/ubuntu/claude-executor|${OUTPOST_DIR:-/opt/outpost}|g')
     
-    # Remove any lines with actual secrets (paranoid check)
-    sed -i \
-        -e '/github_pat_/d' \
-        -e '/AKIA[A-Z0-9]\{16\}/d' \
-        -e '/sk-ant-/d' \
-        "$file"
+    # Remove hardcoded usernames in clone URLs (but keep ${GITHUB_USER} pattern)
+    content=$(echo "$content" | sed 's|github.com/rgsuarez/|github.com/${GITHUB_USER}/|g')
+    
+    # Remove specific instance IDs and IPs
+    content=$(echo "$content" | sed 's/mi-0d77bfe39f630bd5c/${SSM_INSTANCE_ID}/g')
+    content=$(echo "$content" | sed 's/mi-0ece7b1a53a67e600/${SSM_INSTANCE_ID}/g')
+    content=$(echo "$content" | sed 's/52\.44\.78\.2/${OUTPOST_SERVER}/g')
+    
+    # Remove AWS account IDs
+    content=$(echo "$content" | sed 's/311493921645/${AWS_ACCOUNT_ID}/g')
+    content=$(echo "$content" | sed 's/535471339422/${AWS_ACCOUNT_ID}/g')
+    
+    # Remove any leaked credentials (paranoid check)
+    content=$(echo "$content" | sed 's/github_pat_[A-Za-z0-9_]\+/\${GITHUB_TOKEN}/g')
+    content=$(echo "$content" | sed 's/AKIA[A-Z0-9]\{16\}/\${AWS_ACCESS_KEY_ID}/g')
+    content=$(echo "$content" | sed 's/sk-ant-[A-Za-z0-9-]\+/\${ANTHROPIC_API_KEY}/g')
+    
+    echo "$content"
+}
+
+push_file() {
+    local path="$1"
+    local content="$2"
+    local message="$3"
+    
+    local encoded=$(echo "$content" | base64 -w 0)
+    
+    # Check if file exists to get SHA
+    local sha=$(curl -s -H "Authorization: token $ZEROECHELON_TOKEN" \
+        "https://api.github.com/repos/$PUBLIC_REPO/contents/$path" | \
+        python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('sha',''))" 2>/dev/null || echo "")
+    
+    local data
+    if [[ -n "$sha" && "$sha" != "" ]]; then
+        data="{\"message\":\"$message\",\"content\":\"$encoded\",\"sha\":\"$sha\"}"
+    else
+        data="{\"message\":\"$message\",\"content\":\"$encoded\"}"
+    fi
+    
+    curl -s -X PUT -H "Authorization: token $ZEROECHELON_TOKEN" \
+        "https://api.github.com/repos/$PUBLIC_REPO/contents/$path" \
+        -d "$data" | \
+        python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('commit',{}).get('sha','')[:7] if 'commit' in d else d.get('message','error'))"
 }
 
 # ═══════════════════════════════════════════════════════════════════
-# SETUP WORK DIRECTORY
+# PROCESS FILES
 # ═══════════════════════════════════════════════════════════════════
 
-echo "📦 Setting up work directory..."
-mkdir -p "$WORK_DIR"
-cd "$WORK_DIR"
-
-# Clone public repo (or init if empty)
-if git clone "$PUBLIC_REPO_URL" public 2>/dev/null; then
-    echo "   Cloned existing public repo"
-else
-    echo "   Initializing new public repo"
-    mkdir public
-    cd public
-    git init
-    git remote add origin "$PUBLIC_REPO_URL"
-    cd ..
-fi
-
-cd public
-
-# ═══════════════════════════════════════════════════════════════════
-# COPY AND SCRUB FILES
-# ═══════════════════════════════════════════════════════════════════
-
+echo "📥 Fetching and scrubbing files..."
 echo ""
-echo "📝 Processing files..."
 
-# Create directory structure
-mkdir -p scripts docs templates
+PROCESSED=()
+FAILED=()
 
-# Copy and scrub publishable files
 for file in "${PUBLISH_FILES[@]}"; do
-    src="$PRIVATE_REPO/$file"
-    if [[ -f "$src" ]]; then
-        echo "   ✅ $file"
-        cp "$src" "$file"
-        scrub_file "$file"
-    else
-        echo "   ⚠️ $file (not found, skipping)"
+    echo -n "  $file: "
+    
+    content=$(fetch_file "$file")
+    
+    if [[ -z "$content" ]]; then
+        echo "⚠️ not found in private repo"
+        FAILED+=("$file")
+        continue
     fi
+    
+    # Apply scrubbing
+    scrubbed=$(scrub_content "$content")
+    
+    # Save locally for dry-run inspection
+    mkdir -p "$WORK_DIR/$(dirname "$file")"
+    echo "$scrubbed" > "$WORK_DIR/$file"
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "✓ (dry run)"
+    else
+        result=$(push_file "$file" "$scrubbed" "$COMMIT_MSG")
+        echo "$result"
+    fi
+    
+    PROCESSED+=("$file")
 done
 
 # ═══════════════════════════════════════════════════════════════════
@@ -160,185 +181,169 @@ done
 # ═══════════════════════════════════════════════════════════════════
 
 echo ""
-echo "📝 Generating public files..."
+echo "📝 Generating public-only files..."
+echo ""
 
-# README.md - AI-agent optimized
-cat > README.md << 'READMEEOF'
-# Outpost
+# README.md
+README_CONTENT='# Outpost
 
 > Multi-agent coding executor. Dispatch tasks to Claude, Codex, Gemini, and Aider in parallel.
 
-## What This Is
-
-Outpost runs AI coding agents on a remote server. You send a task, it executes across one or more agents in isolated workspaces, and returns results.
-
-```
-Your Session ──► SSH ──► Remote Server ──► [Claude, Codex, Gemini, Aider]
-                                                      │
-                                              Isolated Workspaces
-                                                      │
-                                              Results + Diffs
-```
-
-## Quick Start (For AI Agents)
-
-If you are an AI agent helping a user set up Outpost, follow these steps:
-
-### Step 1: Gather Requirements
-
-Prompt your user for:
-
-```yaml
-required:
-  server_host: "IP or hostname of a Linux server"
-  server_user: "SSH username with sudo privileges"
-  ssh_access: "SSH key or password access to server"
-  github_token: "GitHub PAT with repo read/write access"
-
-optional_agent_credentials:
-  anthropic_api_key: "For Claude Code"
-  openai_api_key: "For Codex CLI"
-  google_api_key: "For Gemini CLI"
-  deepseek_api_key: "For Aider (cheapest option)"
-```
-
-At minimum, user needs ONE agent credential. Aider with DeepSeek is cheapest (~$0.14/MTok).
-
-### Step 2: Server Setup
-
-SSH to the server and execute:
+## Quick Start
 
 ```bash
-# Create directory
-sudo mkdir -p /opt/outpost
-sudo chown $USER:$USER /opt/outpost
+# On your Linux or macOS server
+sudo mkdir -p /opt/outpost && sudo chown $USER:$USER /opt/outpost
 cd /opt/outpost
-
-# Clone Outpost
 git clone https://github.com/zeroechelon/outpost.git .
-
-# Configure
 cp .env.template .env
-nano .env  # Add credentials
-
-# Make executable
+nano .env  # Add GITHUB_TOKEN, GITHUB_USER, and at least one agent key
 chmod +x scripts/*.sh
-
-# Install agents
 ./scripts/setup-agents.sh
-```
-
-### Step 3: Test
-
-```bash
-./scripts/dispatch-unified.sh <user-repo> "Add a README" --executor=aider
-```
-
-## Usage
-
-```bash
-# Single agent
-./scripts/dispatch-unified.sh <repo> "<task>" --executor=claude
-
-# Multiple agents in parallel
-./scripts/dispatch-unified.sh <repo> "<task>" --executor=claude,aider
-
-# All agents
-./scripts/dispatch-unified.sh <repo> "<task>" --executor=all
-
-# With context injection (recommended with zeOS)
-./scripts/dispatch-unified.sh <repo> "<task>" --executor=claude --context
+./scripts/dispatch-unified.sh <your-repo> "Add README" --executor=aider
 ```
 
 ## Agents
 
 | Agent | Credential | Cost |
 |-------|-----------|------|
-| `claude` | `ANTHROPIC_API_KEY` | ~$15/MTok or $100/mo Max |
-| `codex` | `OPENAI_API_KEY` | ~$10/MTok or $20/mo Pro |
+| `aider` | `DEEPSEEK_API_KEY` | ~$0.14/MTok (cheapest) |
+| `claude` | `ANTHROPIC_API_KEY` | $100/mo or ~$15-75/MTok |
+| `codex` | `OPENAI_API_KEY` | $20/mo or ~$10/MTok |
 | `gemini` | `GOOGLE_API_KEY` | Free tier available |
-| `aider` | `DEEPSEEK_API_KEY` | ~$0.14/MTok (recommended) |
 
-## Context Injection
+## Documentation
 
-For continuity-aware execution, use `--context`:
+- [Server Setup](docs/SETUP_SERVER.md) — Install on Linux/macOS
+- [Agent Setup](docs/SETUP_AGENTS.md) — Configure API keys and OAuth
+- [Context Injection](docs/CONTEXT_INJECTION_SPEC.md) — Enhanced with zeOS
+
+## Usage
 
 ```bash
---context=minimal    # 600 tokens (SOUL + JOURNAL)
---context=standard   # 1200 tokens (default)
---context=full       # 1800 tokens
-```
+# Single agent
+./scripts/dispatch-unified.sh <repo> "<task>" --executor=aider
 
-Works best with [zeOS](https://github.com/rgsuarez/zeOS) project structure.
+# Multiple agents
+./scripts/dispatch-unified.sh <repo> "<task>" --executor=claude,aider
+
+# With context injection
+./scripts/dispatch-unified.sh <repo> "<task>" --executor=claude --context
+```
 
 ## License
 
-MIT License - See [LICENSE](LICENSE)
-READMEEOF
+MIT — See [LICENSE](LICENSE)
 
-echo "   ✅ README.md"
+## Related
+
+- [zeOS](https://github.com/rgsuarez/zeOS) — Enhanced context injection
+'
+
+echo -n "  README.md: "
+if [[ "$DRY_RUN" == "true" ]]; then
+    echo "$README_CONTENT" > "$WORK_DIR/README.md"
+    echo "✓ (dry run)"
+else
+    result=$(push_file "README.md" "$README_CONTENT" "$COMMIT_MSG")
+    echo "$result"
+fi
+
+# LICENSE
+LICENSE_CONTENT='MIT License
+
+Copyright (c) 2026 Zero Echelon LLC
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+'
+
+echo -n "  LICENSE: "
+if [[ "$DRY_RUN" == "true" ]]; then
+    echo "$LICENSE_CONTENT" > "$WORK_DIR/LICENSE"
+    echo "✓ (dry run)"
+else
+    result=$(push_file "LICENSE" "$LICENSE_CONTENT" "$COMMIT_MSG")
+    echo "$result"
+fi
 
 # .env.template
-cat > .env.template << 'ENVEOF'
-# Outpost Environment Configuration
+ENV_TEMPLATE='# Outpost Environment Configuration
 
 # Required
 GITHUB_TOKEN=""
 GITHUB_USER=""
 
-# Agent credentials (at least one)
-ANTHROPIC_API_KEY=""
-OPENAI_API_KEY=""
-GOOGLE_API_KEY=""
-DEEPSEEK_API_KEY=""
+# Agents (at least one)
+DEEPSEEK_API_KEY=""      # Aider (cheapest)
+ANTHROPIC_API_KEY=""     # Claude
+OPENAI_API_KEY=""        # Codex
+GOOGLE_API_KEY=""        # Gemini
 
 # Optional
 AGENT_TIMEOUT=600
-ENVEOF
+'
 
-echo "   ✅ .env.template"
+echo -n "  .env.template: "
+if [[ "$DRY_RUN" == "true" ]]; then
+    echo "$ENV_TEMPLATE" > "$WORK_DIR/.env.template"
+    echo "✓ (dry run)"
+else
+    result=$(push_file ".env.template" "$ENV_TEMPLATE" "$COMMIT_MSG")
+    echo "$result"
+fi
 
 # .gitignore
-cat > .gitignore << 'IGNOREEOF'
-.env
+GITIGNORE='.env
 runs/
 repos/
 *.log
 .cache-lock-*
 .scripts-sync
-IGNOREEOF
+'
 
-echo "   ✅ .gitignore"
+echo -n "  .gitignore: "
+if [[ "$DRY_RUN" == "true" ]]; then
+    echo "$GITIGNORE" > "$WORK_DIR/.gitignore"
+    echo "✓ (dry run)"
+else
+    result=$(push_file ".gitignore" "$GITIGNORE" "$COMMIT_MSG")
+    echo "$result"
+fi
 
 # ═══════════════════════════════════════════════════════════════════
-# COMMIT AND PUSH
+# SUMMARY
 # ═══════════════════════════════════════════════════════════════════
 
 echo ""
-echo "📊 Changes:"
-git status --short
-
+echo "═══════════════════════════════════════════════════════════════"
 if [[ "$DRY_RUN" == "true" ]]; then
-    echo ""
-    echo "🔍 DRY RUN - Not committing"
-    echo "   Files prepared in: $WORK_DIR/public"
+    echo "🔍 DRY RUN COMPLETE"
+    echo "═══════════════════════════════════════════════════════════════"
+    echo "Files prepared in: $WORK_DIR"
+    echo "Review scrubbed content before actual publish."
 else
-    echo ""
-    echo "📤 Committing and pushing..."
-    git add -A
-    git commit -m "$COMMIT_MSG" || echo "   No changes to commit"
-    git push origin main || git push -u origin main
-    
-    echo ""
-    echo "✅ Published to: $PUBLIC_REPO_URL"
-fi
-
-# Cleanup
-if [[ "$DRY_RUN" == "false" ]]; then
+    echo "✅ PUBLISH COMPLETE"
+    echo "═══════════════════════════════════════════════════════════════"
+    echo "Published to: https://github.com/$PUBLIC_REPO"
     rm -rf "$WORK_DIR"
 fi
 
 echo ""
-echo "═══════════════════════════════════════════════════════════════"
-echo "✅ PUBLISH COMPLETE"
-echo "═══════════════════════════════════════════════════════════════"
+echo "Processed: ${#PROCESSED[@]} files"
+[[ ${#FAILED[@]} -gt 0 ]] && echo "Failed: ${FAILED[*]}"
