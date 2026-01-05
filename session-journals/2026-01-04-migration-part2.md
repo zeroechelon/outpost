@@ -83,3 +83,50 @@ aws ssm send-command --profile soc --instance-ids "mi-0bbd8fed3f0650ddb" \
 
 ### Current Focus
 Task 5: Clone dispatch scripts from outpost repo
+
+---
+type: checkpoint
+timestamp: 2026-01-05T01:50:00Z
+note: "Task 5 complete - dispatch scripts cloned and structured"
+---
+
+## Work Since Last Save
+
+### Actions Taken
+- Cloned rgsuarez/outpost repo to temp-clone directory
+- Copied all dispatch scripts to /home/ubuntu/claude-executor/
+- Created repos/ and runs/ directories
+- Set executable permissions on all .sh files
+- Verified structure matches SOC server layout
+
+### Decisions Made
+- Moved dispatch scripts from scripts/ subdirectory to executor root — rationale: matches existing SOC server structure and OUTPOST_SOUL.md specification
+
+### Commands Executed
+```bash
+# Clone and setup
+aws ssm send-command --profile soc --instance-ids "mi-0bbd8fed3f0650ddb" \
+  --parameters 'commands=["sudo -u ubuntu mkdir -p /home/ubuntu/claude-executor", "cd /home/ubuntu/claude-executor && sudo -u ubuntu git clone https://github.com/rgsuarez/outpost.git temp-clone"]'
+
+# Restructure to match SOC layout
+aws ssm send-command --profile soc --instance-ids "mi-0bbd8fed3f0650ddb" \
+  --parameters 'commands=["cd /home/ubuntu/claude-executor && sudo -u ubuntu mv scripts/dispatch*.sh . && sudo -u ubuntu mkdir -p repos runs && sudo -u ubuntu chmod +x *.sh"]'
+```
+
+### Executor Structure
+```
+/home/ubuntu/claude-executor/
+├── dispatch.sh              # Claude Code
+├── dispatch-codex.sh        # OpenAI Codex
+├── dispatch-gemini.sh       # Gemini CLI
+├── dispatch-aider.sh        # Aider
+├── dispatch-unified.sh      # Unified dispatcher
+├── assemble-context.sh      # Context injection
+├── scrub-secrets.sh         # Security scrubbing
+├── promote-workspace.sh     # Push workspace changes
+├── repos/                   # Cloned repos (cache)
+└── runs/                    # Run artifacts
+```
+
+### Current Focus
+Task 6: Configure .env with API keys
