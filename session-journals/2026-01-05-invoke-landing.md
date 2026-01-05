@@ -3,7 +3,7 @@ type: session
 project: outpost
 status: complete
 started: 2026-01-05T06:00:00Z
-ended: 2026-01-05T07:15:00Z
+ended: 2026-01-05T07:30:00Z
 ---
 
 # Session: INVOKE.md Landing File + S3 Output
@@ -25,6 +25,7 @@ note: "INVOKE.md created, README updated, test passed"
 - Created INVOKE.md landing file with copy-paste SSM commands
 - Updated README.md to v1.6.0
 - Committed and pushed both repos
+- Tagged v1.6.1
 
 ### Files Created
 | File | Purpose |
@@ -36,12 +37,6 @@ note: "INVOKE.md created, README updated, test passed"
 |------|---------|
 | README.md | Updated to v1.6.0, streamlined, points to INVOKE.md |
 | zeos/profiles/richie/PROFILE.md | Outpost entry updated to v1.6.0 COMPLETE |
-
-### Commits
-| Repo | Commit | Message |
-|------|--------|---------|
-| outpost | 0fb2e7f | docs: Add INVOKE.md landing file, update README to v1.6.0 |
-| zeos | fd72f15 | docs(profile): Update Outpost to v1.6.0 COMPLETE |
 
 ---
 type: checkpoint
@@ -57,6 +52,7 @@ note: "S3 output bucket implemented for large outputs"
 - Tested S3 output with simple command (fec88666-5563-4d7d-9870-74524072e462)
 - Updated INVOKE.md with S3 output retrieval instructions
 - Updated README.md and INVOKE.md to v1.7.0
+- Tagged v1.7.0
 
 ### Infrastructure Created
 | Resource | Details |
@@ -73,7 +69,21 @@ SSM StandardOutputContent has 24KB limit. Large agent outputs (blueprints, etc.)
 | INVOKE.md | Added S3_OUTPUT_BUCKET, Large Output section, v1.7.0 |
 | README.md | Updated to v1.7.0 |
 
-### Current State
-- Outpost v1.7.0 with S3 large output support
-- No more truncation on agent runs
-- INVOKE.md documents both standard and S3 retrieval paths
+---
+type: end
+timestamp: 2026-01-05T07:30:00Z
+---
+
+## Session End
+
+### Final State
+- Outpost v1.7.0 tagged and pushed
+- S3 large output support operational
+- INVOKE.md landing file complete
+- No more 24KB truncation on agent runs
+
+### Tags Created
+| Tag | Commit | Description |
+|-----|--------|-------------|
+| v1.6.1 | 29fef08 | INVOKE.md landing file |
+| v1.7.0 | daa2b30 | S3 output bucket for large outputs |
