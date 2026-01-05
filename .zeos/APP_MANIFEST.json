@@ -1,0 +1,10 @@
+{
+  "app_id": "outpost",
+  "zeos_registry": "https://github.com/rgsuarez/zeOS/blob/main/apps/REGISTRY.json",
+  "soul_location": "zeOS:apps/outpost/OUTPOST_SOUL.md",
+  "kernel_version": "live",
+  "architecture": "federated_reference",
+  "created": "2026-01-05T00:26:05Z",
+  "scaffolded_by": "scaffold.py v3.1.0 (retrofit)",
+  "note": "This app boots with live zeOS kernel. No version pinning."
+}
