@@ -1,6 +1,6 @@
 # Outpost
 
-**Multi-Agent Headless Executor System v1.6.0**
+**Multi-Agent Headless Executor System v1.7.0**
 
 Outpost enables Claude sessions to dispatch coding tasks to remote AI agents. Four agents run in parallel on dedicated infrastructure.
 
@@ -54,4 +54,4 @@ Orchestrator -> AWS SSM -> dispatch-unified.sh
 
 ---
 
-*Outpost v1.6.0 - Multi-Agent Headless Executor*
+*Outpost v1.7.0 - Multi-Agent Headless Executor*

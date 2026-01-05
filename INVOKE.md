@@ -11,6 +11,7 @@ AWS_PROFILE: soc
 REGION: us-east-1
 SSM_INSTANCE: mi-0bbd8fed3f0650ddb
 EXECUTOR_PATH: /home/ubuntu/claude-executor/
+S3_OUTPUT_BUCKET: outpost-outputs
 ```
 
 ---
@@ -100,7 +101,18 @@ aws ssm send-command --profile soc \
 
 ## Get Results
 
-Wait 30-90 seconds (depending on task), then:
+Wait 30-90 seconds (depending on task), then check status:
+
+```bash
+aws ssm get-command-invocation --profile soc \
+  --command-id "<COMMAND_ID>" \
+  --instance-id "mi-0bbd8fed3f0650ddb" \
+  --query 'Status' --output text
+```
+
+### Standard Output (< 24KB)
+
+For small outputs, use SSM directly:
 
 ```bash
 aws ssm get-command-invocation --profile soc \
@@ -109,13 +121,28 @@ aws ssm get-command-invocation --profile soc \
   --query 'StandardOutputContent' --output text
 ```
 
-Or check status only:
+### Large Output (> 24KB) — Use S3
+
+For large outputs (agent runs, blueprints), add S3 output to your send-command:
 
 ```bash
-aws ssm get-command-invocation --profile soc \
-  --command-id "<COMMAND_ID>" \
-  --instance-id "mi-0bbd8fed3f0650ddb" \
-  --query 'Status' --output text
+aws ssm send-command --profile soc \
+  --instance-ids "mi-0bbd8fed3f0650ddb" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["sudo -u ubuntu /home/ubuntu/claude-executor/dispatch-unified.sh <REPO> \"<TASK>\" --executor=claude"]' \
+  --output-s3-bucket-name "outpost-outputs" \
+  --output-s3-key-prefix "runs/" \
+  --query 'Command.CommandId' --output text
+```
+
+Then retrieve from S3:
+
+```bash
+# List output files
+aws s3 ls s3://outpost-outputs/runs/<COMMAND_ID>/ --profile soc --recursive
+
+# Get stdout
+aws s3 cp s3://outpost-outputs/runs/<COMMAND_ID>/mi-0bbd8fed3f0650ddb/awsrunShellScript/0.awsrunShellScript/stdout - --profile soc
 ```
 
 ---
@@ -168,4 +195,4 @@ aws ssm send-command --profile soc \
 
 ---
 
-*Outpost v1.6.0 — Read OUTPOST_INTERFACE.md for full API spec*
+*Outpost v1.7.0 — Read OUTPOST_INTERFACE.md for full API spec*
