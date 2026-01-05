@@ -29,7 +29,7 @@ RUNS_DIR="$EXECUTOR_DIR/runs"
 SCRIPTS_DIR="$EXECUTOR_DIR/scripts"
 GITHUB_USER="rgsuarez"
 AGENT_TIMEOUT="${AGENT_TIMEOUT:-600}"
-GROK_MODEL="${GROK_MODEL:-grok-3}"
+GROK_MODEL="${GROK_MODEL:-grok-4.1}"
 
 RUN_ID="$(date +%Y%m%d-%H%M%S)-grok-$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
 RUN_DIR="$RUNS_DIR/$RUN_ID"

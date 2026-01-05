@@ -26,7 +26,7 @@ def parse_args():
     parser.add_argument("--repo", required=True, help="Repository name")
     parser.add_argument("--task", required=True, help="Task to execute")
     parser.add_argument("--workspace", required=True, help="Workspace directory")
-    parser.add_argument("--model", default="grok-3", help="Grok model (grok-3, grok-3-mini, grok-2)")
+    parser.add_argument("--model", default="grok-4.1", help="Grok model (grok-4.1, grok-4.1-mini, grok-2)")
     return parser.parse_args()
 
 
