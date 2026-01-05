@@ -205,8 +205,70 @@ gemini auth login
 ### Current Focus
 Next session: SSH to outpost-prod, complete OAuth logins, retest
 
+---
+type: checkpoint
+timestamp: 2026-01-05T03:25:00Z
+note: "Task 7 COMPLETE - All 4 agents operational"
+---
+
+## Work Since Last Save
+
+### Actions Taken
+1. Investigated SOC server credential structure for Codex/Gemini
+2. Discovered missing files:
+   - Codex: Uses `~/.codex/auth.json` (not credentials.json)
+   - Gemini: Additional files `google_accounts.json`, `settings.json` not copied
+3. Created tarball of all credential files on SOC, base64 transferred via SSM
+4. Extracted credentials to outpost-prod with correct ownership/permissions
+5. Fixed dispatch scripts for root execution issue
+6. Upgraded Node.js from v18.19.1 to v20.19.6 for Gemini CLI compatibility
+
+### Credential Files Transferred
+| Path | Purpose |
+|------|---------|
+| ~/.codex/auth.json | Codex OAuth tokens |
+| ~/.gemini/oauth_creds.json | Gemini OAuth tokens |
+| ~/.gemini/google_accounts.json | Active account selection |
+| ~/.gemini/settings.json | Auth mode settings (OAuth) |
+
+### Fixes Applied
+
+**Root Privilege Issue**:
+SSM runs commands as root, but `--dangerously-skip-permissions` rejects root/sudo. Fixed by wrapping agent execution:
+
+| Script | Line Changed | Fix |
+|--------|--------------|-----|
+| dispatch.sh | 101 | `timeout "$AGENT_TIMEOUT" claude` → `sudo -u ubuntu timeout "$AGENT_TIMEOUT" claude` |
+| dispatch-codex.sh | 88 | `timeout "$AGENT_TIMEOUT" codex` → `sudo -u ubuntu timeout "$AGENT_TIMEOUT" codex` |
+| dispatch-gemini.sh | 81 | `timeout "$AGENT_TIMEOUT" gemini` → `sudo -u ubuntu timeout "$AGENT_TIMEOUT" gemini` |
+
+**Node.js Version**:
+Gemini CLI uses `/v` regex flag (requires Node 20+). Outpost-prod had Node 18.19.1.
+- Installed NodeSource repo for Node 20.x
+- Upgraded to Node v20.19.6
+
+### Final Test Results
+```
+=== FINAL ALL AGENTS TEST ===
+Aider:   Status: success
+Claude:  Status: success
+Codex:   Status: success
+Gemini:  Status: success
+=== TEST COMPLETE ===
+```
+
+### Updated Package Versions
+| Package | Old Version | New Version |
+|---------|-------------|-------------|
+| node | 18.19.1 | 20.19.6 |
+| npm | 9.2.0 | 10.8.2 |
+
 ### Infrastructure State
 | Server | IP | SSM Instance | Status |
 |--------|----|--------------| -------|
-| outpost-prod | 34.195.223.189 | mi-0bbd8fed3f0650ddb | Aider working, 3 agents need OAuth login |
+| outpost-prod | 34.195.223.189 | mi-0bbd8fed3f0650ddb | **FULLY OPERATIONAL** - All 4 agents passing |
 | SOC (old) | 52.44.78.2 | mi-0d77bfe39f630bd5c | Still active, pending cleanup |
+
+### Current Focus
+Task 8: Update SSM instance ID in docs
+Task 9: Clean Outpost off SOC
