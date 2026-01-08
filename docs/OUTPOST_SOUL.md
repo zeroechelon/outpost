@@ -104,3 +104,8 @@ Ready for Outpost directives.
 3. Multi-server support (beyond SOC)
 4. Branch workflow (feature branches, not just main)
 5. Parallel task execution
+
+## Active Blueprint
+
+active_blueprint: "blueprints/OUTPOST_V2_MULTI_TENANT_SAAS.md"
+blueprint_version: "2.1.0"
