@@ -1,0 +1,51 @@
+{
+  "tables": [
+    {
+      "name": "outpost-tenants",
+      "partition_key": "tenant_id",
+      "sort_key": "sk",
+      "gsis": [
+        {
+          "name": "api_key-index",
+          "partition_key": "api_key_hash",
+          "sort_key": null,
+          "projection_type": "ALL"
+        }
+      ],
+      "attributes": [
+        { "name": "tenant_id", "type": "S" },
+        { "name": "sk", "type": "S" },
+        { "name": "api_key_hash", "type": "S" }
+      ]
+    },
+    {
+      "name": "outpost-jobs",
+      "partition_key": "tenant_id",
+      "sort_key": "job_id",
+      "gsis": [
+        {
+          "name": "status-index",
+          "partition_key": "status",
+          "sort_key": "created_at",
+          "projection_type": "ALL"
+        }
+      ],
+      "attributes": [
+        { "name": "tenant_id", "type": "S" },
+        { "name": "job_id", "type": "S" },
+        { "name": "status", "type": "S" },
+        { "name": "created_at", "type": "S" }
+      ]
+    },
+    {
+      "name": "outpost-audit",
+      "partition_key": "tenant_id",
+      "sort_key": "timestamp",
+      "ttl_attribute": "expires_at",
+      "attributes": [
+        { "name": "tenant_id", "type": "S" },
+        { "name": "timestamp", "type": "S" }
+      ]
+    }
+  ]
+}

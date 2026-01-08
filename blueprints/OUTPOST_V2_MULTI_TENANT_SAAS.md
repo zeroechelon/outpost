@@ -90,75 +90,11 @@ execution:
 ```yaml
 task_id: T0.1
 name: "Design DynamoDB table schemas"
-status: not_started
-assignee: null
+status: completed
+assignee: "Claude"
 estimated_sessions: 2
 dependencies: []
-
-input_bindings: {}
-
-interface:
-  input: "Current Outpost data model, multi-tenant requirements"
-  output: "DynamoDB table schemas with GSIs for tenants, jobs, and audit"
-  input_type: none
-  output_type: json
-  output_schema:
-    type: object
-    properties:
-      tables:
-        type: array
-        items:
-          type: object
-          properties:
-            name: { type: string }
-            partition_key: { type: string }
-            sort_key: { type: string }
-            gsis: { type: array }
-    required: [tables]
-
-output:
-  location: file
-  path: "/tmp/blueprint/${task_id}/dynamodb_schema.json"
-  format: json
-  ports:
-    schema:
-      type: json
-    terraform_vars:
-      type: json
-
-required_capabilities:
-  - python3.11
-
-resources:
-  cpu: 1
-  memory: "512Mi"
-  timeout: PT1H
-  locks: []
-
-files_to_create:
-  - infrastructure/dynamodb/schema.json
-  - infrastructure/dynamodb/terraform.tfvars
-
-acceptance_criteria:
-  - "Tenants table: pk=tenant_id, indexes for api_key lookup"
-  - "Jobs table: pk=tenant_id, sk=job_id, GSI for status queries"
-  - "Audit table: pk=tenant_id, sk=timestamp, TTL for retention"
-  - "Single-table design evaluated and documented"
-  - "Capacity planning for 100+ concurrent tenants"
-
-verification:
-  smoke:
-    command: "test -f infrastructure/dynamodb/schema.json"
-    timeout: PT5S
-  unit:
-    command: "python3 -c 'import json; json.load(open(\"infrastructure/dynamodb/schema.json\"))'"
-    timeout: PT10S
-
-rollback: "rm -f infrastructure/dynamodb/schema.json infrastructure/dynamodb/terraform.tfvars"
-
-notes: |
-  Consider single-table vs multi-table design. GSI for api_key->tenant lookup is critical for auth.
-  Audit table needs TTL for compliance (90-day default retention).
+```
 ```
 
 ### T0.2: Terraform Module — DynamoDB
@@ -166,75 +102,10 @@ notes: |
 ```yaml
 task_id: T0.2
 name: "Create Terraform module for DynamoDB tables"
-status: not_started
-assignee: null
+status: completed
+assignee: "Claude"
 estimated_sessions: 2
 dependencies: [T0.1]
-
-input_bindings:
-  schema:
-    source: T0.1
-    output_port: schema
-    transfer: file
-    required: true
-  terraform_vars:
-    source: T0.1
-    output_port: terraform_vars
-    transfer: file
-    required: true
-
-interface:
-  input: "DynamoDB schema JSON from T0.1"
-  output: "Terraform module with tables, GSIs, and IAM policies"
-  input_type: json
-  output_type: file_path
-
-output:
-  location: file
-  path: "/tmp/blueprint/${task_id}/terraform_module_path.txt"
-  format: text
-  ports:
-    module_path:
-      type: file_path
-
-required_capabilities:
-  - terraform
-
-resources:
-  cpu: 1
-  memory: "512Mi"
-  timeout: PT1H
-  locks:
-    - name: "terraform_state"
-      mode: exclusive
-
-files_to_create:
-  - infrastructure/terraform/modules/dynamodb/main.tf
-  - infrastructure/terraform/modules/dynamodb/variables.tf
-  - infrastructure/terraform/modules/dynamodb/outputs.tf
-  - infrastructure/terraform/modules/dynamodb/iam.tf
-
-acceptance_criteria:
-  - "Module creates all tables from schema"
-  - "GSIs configured with appropriate projections"
-  - "PAY_PER_REQUEST billing mode (auto-scaling)"
-  - "IAM policies for Lambda read/write access"
-  - "Point-in-time recovery enabled"
-  - "terraform validate passes"
-
-verification:
-  smoke:
-    command: "test -f infrastructure/terraform/modules/dynamodb/main.tf"
-    timeout: PT5S
-  unit:
-    command: "cd infrastructure/terraform/modules/dynamodb && terraform init -backend=false && terraform validate"
-    timeout: PT2M
-
-rollback: "rm -rf infrastructure/terraform/modules/dynamodb"
-
-notes: |
-  Use PAY_PER_REQUEST for unpredictable multi-tenant workloads.
-  Enable point-in-time recovery for audit compliance.
 ```
 
 ### T0.3: API Data Models (Python/Pydantic)
@@ -242,10 +113,11 @@ notes: |
 ```yaml
 task_id: T0.3
 name: "Define API data models with Pydantic"
-status: not_started
-assignee: null
+status: completed
+assignee: "Claude"
 estimated_sessions: 2
 dependencies: [T0.1]
+```
 
 input_bindings:
   schema:
@@ -315,68 +187,10 @@ notes: |
 ```yaml
 task_id: T0.4
 name: "Implement Secrets Manager client for API keys"
-status: not_started
-assignee: null
+status: completed
+assignee: "Claude"
 estimated_sessions: 1
 dependencies: [T0.3]
-
-input_bindings:
-  models_module:
-    source: T0.3
-    output_port: models_module
-    transfer: file
-    required: true
-
-interface:
-  input: "Pydantic APIKey model from T0.3"
-  output: "SecretsManager client for storing/retrieving per-tenant secrets"
-  input_type: file_path
-  output_type: file_path
-
-output:
-  location: file
-  path: "/tmp/blueprint/${task_id}/secrets_client_path.txt"
-  format: text
-  ports:
-    secrets_client:
-      type: file_path
-
-required_capabilities:
-  - python3.11
-  - boto3
-
-resources:
-  cpu: 1
-  memory: "512Mi"
-  timeout: PT1H
-  locks: []
-
-files_to_create:
-  - src/outpost/secrets/__init__.py
-  - src/outpost/secrets/manager.py
-  - src/outpost/secrets/api_key.py
-
-acceptance_criteria:
-  - "Create secret with automatic rotation policy"
-  - "Retrieve secret with caching (5-min TTL)"
-  - "Delete secret (soft-delete with recovery window)"
-  - "Per-tenant namespace: /outpost/tenants/{tenant_id}/*"
-  - "Never log or expose plaintext secrets"
-  - "Unit tests with moto mock"
-
-verification:
-  smoke:
-    command: "python3 -c 'from src.outpost.secrets import SecretsManager'"
-    timeout: PT10S
-  unit:
-    command: "python3 -m pytest tests/unit/test_secrets.py -v"
-    timeout: PT2M
-
-rollback: "rm -rf src/outpost/secrets"
-
-notes: |
-  Use AWS Secrets Manager for API keys. Implement local caching to reduce costs.
-  Secret names: /outpost/tenants/{tenant_id}/api_keys/{key_name}
 ```
 
 ---
@@ -388,8 +202,8 @@ notes: |
 ```yaml
 task_id: T1.1
 name: "Implement API key authentication Lambda authorizer"
-status: not_started
-assignee: null
+status: completed
+assignee: "Claude"
 estimated_sessions: 3
 dependencies: [T0.3, T0.4]
 
@@ -482,8 +296,8 @@ notes: |
 ```yaml
 task_id: T1.2
 name: "Implement tenant CRUD API endpoints"
-status: not_started
-assignee: null
+status: completed
+assignee: "Claude"
 estimated_sessions: 3
 dependencies: [T0.2, T0.3, T1.1]
 
@@ -561,78 +375,10 @@ notes: |
 ```yaml
 task_id: T1.3
 name: "Create Terraform module for API Gateway"
-status: not_started
-assignee: null
+status: completed
+assignee: "Claude"
 estimated_sessions: 2
 dependencies: [T1.1, T1.2]
-
-input_bindings:
-  lambda_handler:
-    source: T1.1
-    output_port: lambda_handler
-    transfer: file
-    required: true
-  api_handlers:
-    source: T1.2
-    output_port: api_handlers
-    transfer: file
-    required: true
-
-interface:
-  input: "Lambda handlers from T1.1 and T1.2"
-  output: "Terraform module for API Gateway with authorizer"
-  input_type: file_path
-  output_type: file_path
-
-output:
-  location: file
-  path: "/tmp/blueprint/${task_id}/api_gw_module_path.txt"
-  format: text
-  ports:
-    module_path:
-      type: file_path
-    api_endpoint:
-      type: text
-
-required_capabilities:
-  - terraform
-
-resources:
-  cpu: 1
-  memory: "512Mi"
-  timeout: PT1H
-  locks:
-    - name: "terraform_state"
-      mode: exclusive
-
-files_to_create:
-  - infrastructure/terraform/modules/api_gateway/main.tf
-  - infrastructure/terraform/modules/api_gateway/variables.tf
-  - infrastructure/terraform/modules/api_gateway/outputs.tf
-  - infrastructure/terraform/modules/api_gateway/routes.tf
-
-acceptance_criteria:
-  - "HTTP API (API Gateway v2) for lower latency"
-  - "TOKEN authorizer integration"
-  - "Routes: /tenants/*, /jobs/*, /health"
-  - "CORS configuration for web console"
-  - "Custom domain support (optional)"
-  - "Access logging to CloudWatch"
-  - "Rate limiting per API key (1000 req/min default)"
-
-verification:
-  smoke:
-    command: "test -f infrastructure/terraform/modules/api_gateway/main.tf"
-    timeout: PT5S
-  unit:
-    command: "cd infrastructure/terraform/modules/api_gateway && terraform init -backend=false && terraform validate"
-    timeout: PT2M
-
-rollback: "rm -rf infrastructure/terraform/modules/api_gateway"
-
-notes: |
-  Use HTTP API (v2) not REST API for cost/latency.
-  Authorizer caching = 300s, key source = Authorization header.
 ```
 
 ### T1.4: Audit Trail Service
@@ -640,8 +386,8 @@ notes: |
 ```yaml
 task_id: T1.4
 name: "Implement audit trail logging service"
-status: not_started
-assignee: null
+status: completed
+assignee: "Claude"
 estimated_sessions: 2
 dependencies: [T0.2, T0.3]
 
@@ -712,10 +458,11 @@ notes: |
 ```yaml
 task_id: T2.1
 name: "Create Terraform module for SQS job queues"
-status: not_started
-assignee: null
+status: completed
+assignee: "Claude"
 estimated_sessions: 1
 dependencies: [T0.2]
+```
 
 input_bindings:
   dynamodb_module:
@@ -786,88 +533,10 @@ notes: |
 ```yaml
 task_id: T2.2
 name: "Implement job submission API endpoint"
-status: not_started
-assignee: null
+status: completed
+assignee: "Claude"
 estimated_sessions: 2
 dependencies: [T1.1, T1.4, T2.1]
-
-input_bindings:
-  lambda_handler:
-    source: T1.1
-    output_port: lambda_handler
-    transfer: file
-    required: true
-  audit_service:
-    source: T1.4
-    output_port: audit_service
-    transfer: file
-    required: true
-
-interface:
-  input: "POST /jobs request with agent, command, workspace"
-  output: "Lambda handler for job submission to SQS"
-  input_type: json
-  input_schema:
-    type: object
-    properties:
-      agent: { type: string, enum: ["claude", "codex", "gemini", "grok", "aider"] }
-      command: { type: string, maxLength: 10000 }
-      workspace: { type: string }
-      priority: { type: string, enum: ["low", "normal", "high"] }
-    required: [agent, command]
-  output_type: json
-  output_schema:
-    type: object
-    properties:
-      job_id: { type: string }
-      status: { type: string }
-      estimated_start: { type: string }
-
-output:
-  location: file
-  path: "/tmp/blueprint/${task_id}/job_api_path.txt"
-  format: text
-  ports:
-    api_handler:
-      type: file_path
-
-required_capabilities:
-  - python3.11
-  - boto3
-
-resources:
-  cpu: 1
-  memory: "512Mi"
-  timeout: PT2H
-  locks: []
-
-files_to_create:
-  - src/outpost/lambda/api/jobs.py
-  - tests/unit/test_jobs_api.py
-
-acceptance_criteria:
-  - "POST /jobs - Submit job to SQS"
-  - "GET /jobs/{id} - Get job status"
-  - "GET /jobs - List jobs for tenant (paginated)"
-  - "DELETE /jobs/{id} - Cancel pending job"
-  - "Job ID generated as ULID for sortability"
-  - "SQS message includes tenant context"
-  - "Priority queue routing (high/normal/low)"
-  - "Audit entry for all operations"
-
-verification:
-  smoke:
-    command: "python3 -c 'from src.outpost.lambda.api.jobs import handler'"
-    timeout: PT10S
-  unit:
-    command: "python3 -m pytest tests/unit/test_jobs_api.py -v"
-    timeout: PT2M
-
-rollback: "rm -f src/outpost/lambda/api/jobs.py"
-
-notes: |
-  Use ULID for job_id (time-sortable, collision-resistant).
-  Priority queues: separate SQS queues for high/normal/low.
 ```
 
 ### T2.3: ECS Fargate Task Definition
@@ -875,81 +544,10 @@ notes: |
 ```yaml
 task_id: T2.3
 name: "Create Fargate task definition for job workers"
-status: not_started
-assignee: null
+status: completed
+assignee: "Claude"
 estimated_sessions: 2
 dependencies: [T0.4, T2.1]
-
-input_bindings:
-  secrets_client:
-    source: T0.4
-    output_port: secrets_client
-    transfer: file
-    required: true
-  sqs_module:
-    source: T2.1
-    output_port: module_path
-    transfer: file
-    required: true
-
-interface:
-  input: "Secrets client and SQS queue URLs"
-  output: "Terraform module for ECS Fargate worker tasks"
-  input_type: file_path
-  output_type: file_path
-
-output:
-  location: file
-  path: "/tmp/blueprint/${task_id}/ecs_module_path.txt"
-  format: text
-  ports:
-    module_path:
-      type: file_path
-    task_definition_arn:
-      type: text
-
-required_capabilities:
-  - terraform
-  - docker
-
-resources:
-  cpu: 1
-  memory: "1Gi"
-  timeout: PT2H
-  locks:
-    - name: "terraform_state"
-      mode: exclusive
-
-files_to_create:
-  - infrastructure/terraform/modules/ecs/main.tf
-  - infrastructure/terraform/modules/ecs/variables.tf
-  - infrastructure/terraform/modules/ecs/outputs.tf
-  - infrastructure/terraform/modules/ecs/task_definition.tf
-  - infrastructure/terraform/modules/ecs/iam.tf
-  - infrastructure/docker/worker/Dockerfile
-
-acceptance_criteria:
-  - "Task definition with 2 vCPU, 4GB memory"
-  - "SQS polling container"
-  - "IAM role with SQS, DynamoDB, Secrets Manager access"
-  - "CloudWatch logging configured"
-  - "Secrets injection via Secrets Manager"
-  - "Health check endpoint"
-  - "Graceful shutdown handling (SIGTERM)"
-
-verification:
-  smoke:
-    command: "test -f infrastructure/terraform/modules/ecs/main.tf"
-    timeout: PT5S
-  unit:
-    command: "cd infrastructure/terraform/modules/ecs && terraform init -backend=false && terraform validate"
-    timeout: PT2M
-
-rollback: "rm -rf infrastructure/terraform/modules/ecs"
-
-notes: |
-  Workers poll SQS, execute agent jobs, update DynamoDB status.
-  Long-polling (20s) for efficient message retrieval.
 ```
 
 ### T2.4: Job Worker Implementation
@@ -957,90 +555,10 @@ notes: |
 ```yaml
 task_id: T2.4
 name: "Implement SQS job worker for Fargate"
-status: not_started
-assignee: null
+status: completed
+assignee: "Claude"
 estimated_sessions: 3
 dependencies: [T0.3, T0.4, T1.4, T2.2, T2.3]
-
-input_bindings:
-  models_module:
-    source: T0.3
-    output_port: models_module
-    transfer: file
-    required: true
-  secrets_client:
-    source: T0.4
-    output_port: secrets_client
-    transfer: file
-    required: true
-  audit_service:
-    source: T1.4
-    output_port: audit_service
-    transfer: file
-    required: true
-
-interface:
-  input: "SQS message with job specification"
-  output: "Job execution result and status update"
-  input_type: json
-  output_type: json
-
-output:
-  location: file
-  path: "/tmp/blueprint/${task_id}/worker_path.txt"
-  format: text
-  ports:
-    worker_module:
-      type: file_path
-    docker_image:
-      type: text
-
-required_capabilities:
-  - python3.11
-  - boto3
-  - docker
-
-resources:
-  cpu: 2
-  memory: "2Gi"
-  timeout: PT3H
-  locks: []
-
-files_to_create:
-  - src/outpost/worker/__init__.py
-  - src/outpost/worker/main.py
-  - src/outpost/worker/executor.py
-  - src/outpost/worker/agents.py
-  - tests/unit/test_worker.py
-
-acceptance_criteria:
-  - "SQS long-polling (20s wait time)"
-  - "Message visibility extension during processing"
-  - "Workspace isolation per tenant (EFS mount or S3)"
-  - "Agent dispatch to claude/codex/gemini/grok/aider"
-  - "Job status updates to DynamoDB"
-  - "Output capture to S3"
-  - "Graceful shutdown on SIGTERM"
-  - "Dead letter handling after 3 failures"
-  - "Audit trail for all operations"
-
-verification:
-  smoke:
-    command: "python3 -c 'from src.outpost.worker import Worker'"
-    timeout: PT10S
-  unit:
-    command: "python3 -m pytest tests/unit/test_worker.py -v"
-    timeout: PT5M
-  integration:
-    command: "python3 -m pytest tests/integration/test_worker.py -v"
-    timeout: PT10M
-    optional: true
-
-rollback: "rm -rf src/outpost/worker"
-
-notes: |
-  Workspace isolation critical - use tenant-specific EFS access points or S3 prefixes.
-  Visibility timeout extension: heartbeat every 5 minutes for long jobs.
 ```
 
 ### T2.5: Auto-Scaling Configuration
@@ -1048,8 +566,8 @@ notes: |
 ```yaml
 task_id: T2.5
 name: "Configure ECS auto-scaling based on SQS depth"
-status: not_started
-assignee: null
+status: completed
+assignee: "Claude"
 estimated_sessions: 1
 dependencies: [T2.1, T2.3]
 

@@ -1,0 +1,288 @@
+{
+  "Tenant": {
+    "$defs": {
+      "TenantStatus": {
+        "enum": [
+          "active",
+          "suspended",
+          "deleted"
+        ],
+        "title": "TenantStatus",
+        "type": "string"
+      }
+    },
+    "properties": {
+      "id": {
+        "description": "Unique tenant identifier (UUID or ULID)",
+        "title": "Id",
+        "type": "string"
+      },
+      "name": {
+        "maxLength": 100,
+        "minLength": 1,
+        "title": "Name",
+        "type": "string"
+      },
+      "email": {
+        "description": "Tenant contact email",
+        "title": "Email",
+        "type": "string"
+      },
+      "stripe_customer_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Stripe Customer Id"
+      },
+      "created_at": {
+        "format": "date-time",
+        "title": "Created At",
+        "type": "string"
+      },
+      "status": {
+        "$ref": "#/$defs/TenantStatus",
+        "default": "active"
+      }
+    },
+    "required": [
+      "id",
+      "name",
+      "email"
+    ],
+    "title": "Tenant",
+    "type": "object"
+  },
+  "Job": {
+    "$defs": {
+      "AgentType": {
+        "enum": [
+          "claude",
+          "codex",
+          "gemini",
+          "grok",
+          "aider"
+        ],
+        "title": "AgentType",
+        "type": "string"
+      },
+      "JobStatus": {
+        "enum": [
+          "pending",
+          "running",
+          "success",
+          "failed",
+          "cancelled"
+        ],
+        "title": "JobStatus",
+        "type": "string"
+      }
+    },
+    "properties": {
+      "id": {
+        "description": "Unique job identifier (ULID)",
+        "title": "Id",
+        "type": "string"
+      },
+      "tenant_id": {
+        "description": "Owner tenant ID",
+        "title": "Tenant Id",
+        "type": "string"
+      },
+      "agent": {
+        "$ref": "#/$defs/AgentType"
+      },
+      "command": {
+        "minLength": 1,
+        "title": "Command",
+        "type": "string"
+      },
+      "status": {
+        "$ref": "#/$defs/JobStatus",
+        "default": "pending"
+      },
+      "created_at": {
+        "format": "date-time",
+        "title": "Created At",
+        "type": "string"
+      },
+      "completed_at": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Completed At"
+      },
+      "output_location": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "S3 URI or local path to results",
+        "title": "Output Location"
+      },
+      "error_message": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Error Message"
+      }
+    },
+    "required": [
+      "id",
+      "tenant_id",
+      "agent",
+      "command"
+    ],
+    "title": "Job",
+    "type": "object"
+  },
+  "AuditEntry": {
+    "properties": {
+      "tenant_id": {
+        "title": "Tenant Id",
+        "type": "string"
+      },
+      "timestamp": {
+        "format": "date-time",
+        "title": "Timestamp",
+        "type": "string"
+      },
+      "action": {
+        "description": "e.g., CREATE_JOB, REVOKE_KEY",
+        "title": "Action",
+        "type": "string"
+      },
+      "resource": {
+        "description": "e.g., job_id, api_key_id",
+        "title": "Resource",
+        "type": "string"
+      },
+      "metadata": {
+        "additionalProperties": true,
+        "title": "Metadata",
+        "type": "object"
+      },
+      "request_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Request Id"
+      },
+      "ip_address": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Ip Address"
+      },
+      "user_agent": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "User Agent"
+      }
+    },
+    "required": [
+      "tenant_id",
+      "action",
+      "resource"
+    ],
+    "title": "AuditEntry",
+    "type": "object"
+  },
+  "APIKey": {
+    "properties": {
+      "key_hash": {
+        "description": "SHA-256 hash of the API key",
+        "title": "Key Hash",
+        "type": "string"
+      },
+      "tenant_id": {
+        "title": "Tenant Id",
+        "type": "string"
+      },
+      "name": {
+        "description": "Friendly name for the key",
+        "title": "Name",
+        "type": "string"
+      },
+      "scopes": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Scopes",
+        "type": "array"
+      },
+      "created_at": {
+        "format": "date-time",
+        "title": "Created At",
+        "type": "string"
+      },
+      "last_used": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Last Used"
+      },
+      "revoked": {
+        "default": false,
+        "title": "Revoked",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "key_hash",
+      "tenant_id",
+      "name"
+    ],
+    "title": "APIKey",
+    "type": "object"
+  }
+}
