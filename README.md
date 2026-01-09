@@ -46,6 +46,7 @@ Orchestrator -> AWS SSM -> dispatch-unified.sh
 | [INVOKE.md](INVOKE.md) | **Landing file - copy-paste commands** |
 | [OUTPOST_INTERFACE.md](OUTPOST_INTERFACE.md) | Full API specification |
 | [docs/MULTI_AGENT_INTEGRATION.md](docs/MULTI_AGENT_INTEGRATION.md) | Integration guide |
+| [docs/SSM_AND_PRIVILEGE_CONFIGURATION.md](docs/SSM_AND_PRIVILEGE_CONFIGURATION.md) | SSM keepalive & privilege drop setup |
 
 ## Server
 
