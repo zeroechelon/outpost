@@ -1,0 +1,110 @@
+=== OUTPOST DISPATCH NAMESPACE FIX DEPLOYMENT LOG ===
+Date: 2026-01-11
+Time: $(date +%H:%M:%S)
+
+T3.1.1: Backup Current Production Scripts
+------------------------------------------
+Status: SUCCESS
+CommandId: d0ab2d56-968b-47a5-bb8a-04af146ecf5f
+Backup Location: /home/ubuntu/claude-executor/scripts_backup_20260111_235053
+
+Backed up files (all 6 scripts):
+  - dispatch-aider.sh (4.2K)
+  - dispatch-codex.sh (4.1K)
+  - dispatch-gemini.sh (3.8K)
+  - dispatch-grok.sh (4.1K)
+  - dispatch-unified.sh (20K)
+  - dispatch.sh (4.6K)
+
+Backup verified: All scripts copied successfully
+Timestamp: 2026-01-11 23:50:53 UTC
+
+T3.1.2: Git Commit All Changes
+-------------------------------
+Status: SUCCESS
+Commit: 01f5522d
+Message: fix: Add namespace stripping to dispatch scripts
+
+Files committed:
+  - 6 dispatch scripts (dispatch.sh, dispatch-codex.sh, dispatch-gemini.sh, 
+    dispatch-aider.sh, dispatch-grok.sh, dispatch-unified.sh)
+  - Test suite (unit, integration, smoke tests)
+  - Documentation (spec, blueprint)
+
+Total: 11 files changed, 2346 insertions(+), 13 deletions(-)
+Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+T3.1.3: Push to GitHub and Sync to Outpost Server
+--------------------------------------------------
+Status: SUCCESS
+
+GitHub Push:
+  - Pushed commit 01f5522d to origin/main
+  - Branch synced successfully
+
+Server Deployment:
+  - Fixed git safe.directory issue
+  - Pulled latest from origin/main (01f5522d)
+  - Copied all 6 dispatch scripts to /home/ubuntu/claude-executor/
+  - Set executable permissions
+  
+Verification Results (all PASS):
+  ✓ dispatch.sh (6.7K) - namespace stripping present
+  ✓ dispatch-codex.sh (4.5K) - namespace stripping present
+  ✓ dispatch-gemini.sh (4.2K) - namespace stripping present
+  ✓ dispatch-aider.sh (4.6K) - namespace stripping present
+  ✓ dispatch-grok.sh (4.5K) - namespace stripping present
+  ✓ dispatch-unified.sh (21K) - namespace stripping present
+
+All scripts operational with namespace support.
+Timestamp: 2026-01-11 23:53:35 UTC
+
+T3.2.1: Update AGENTS_README.md with Namespace Format Examples
+---------------------------------------------------------------
+Status: SUCCESS
+
+Added sections:
+  - Repository Name Formats (bare vs namespaced examples)
+  - Usage examples showing both formats
+  - Feature explanation and integration context
+
+T3.2.2: Add Troubleshooting Section for Namespace Issues
+--------------------------------------------------------
+Status: SUCCESS
+
+Added comprehensive troubleshooting:
+  - Empty workspace / rsync cache failures (symptom, cause, solution)
+  - Version verification commands
+  - Rollback instructions
+  - Common errors reference table
+  - Links to related documentation (blueprint, spec, tests)
+
+Documentation Commit: 06ffd4dd
+Message: docs: Update AGENTS_README with namespace format and troubleshooting
+Files: 1 file changed, 61 insertions(+)
+Pushed to: origin/main
+
+===============================================================
+TIER 3 DEPLOYMENT - COMPLETE
+===============================================================
+
+Status: SUCCESS
+Date: 2026-01-11
+Total Commits: 2
+  - 01f5522d: fix: Add namespace stripping to dispatch scripts
+  - 06ffd4dd: docs: Update AGENTS_README with namespace format and troubleshooting
+
+Deployment Summary:
+  ✓ T3.1.1: Production scripts backed up
+  ✓ T3.1.2: Changes committed to git
+  ✓ T3.1.3: Deployed to Outpost server (all 6 scripts verified)
+  ✓ T3.2.1: Documentation updated (namespace formats)
+  ✓ T3.2.2: Troubleshooting guide added
+
+All dispatch scripts operational with namespace stripping support.
+Ready for T4 (Production Validation).
+
+Next Steps:
+  - T4.1: Run awsaudit test query with namespaced format
+  - T4.2: Verify cache behavior
+  - T4.3: Final validation across all agents
