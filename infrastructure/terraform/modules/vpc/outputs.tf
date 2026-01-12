@@ -126,15 +126,44 @@ output "private_route_table_ids" {
 # Flow Logs Outputs
 # -----------------------------------------------------------------------------
 
-# output "flow_log_id" {
-#   description = "ID of the VPC Flow Log"
-#   value       = var.enable_flow_logs ? aws_flow_log.main[0].id : null
-# }
+output "flow_log_id" {
+  description = "ID of the VPC Flow Log"
+  value       = var.enable_flow_logs ? aws_flow_log.main[0].id : null
+}
 
-# output "flow_log_cloudwatch_log_group" {
-#   description = "CloudWatch Log Group for VPC Flow Logs"
-#   value       = var.enable_flow_logs ? aws_cloudwatch_log_group.vpc_flow_logs[0].name : null
-# }
+output "flow_log_cloudwatch_log_group_name" {
+  description = "CloudWatch Log Group name for VPC Flow Logs"
+  value       = var.enable_flow_logs ? aws_cloudwatch_log_group.vpc_flow_logs[0].name : null
+}
+
+output "flow_log_cloudwatch_log_group_arn" {
+  description = "CloudWatch Log Group ARN for VPC Flow Logs"
+  value       = var.enable_flow_logs ? aws_cloudwatch_log_group.vpc_flow_logs[0].arn : null
+}
+
+# -----------------------------------------------------------------------------
+# Network Isolation Outputs (T6.1)
+# -----------------------------------------------------------------------------
+
+output "agent_tasks_isolated_security_group_id" {
+  description = "Security group ID for isolated multi-tenant agent tasks"
+  value       = aws_security_group.agent_tasks_isolated.id
+}
+
+output "agent_tasks_isolated_security_group_arn" {
+  description = "Security group ARN for isolated multi-tenant agent tasks"
+  value       = aws_security_group.agent_tasks_isolated.arn
+}
+
+output "private_isolated_nacl_id" {
+  description = "Network ACL ID for private subnets (defense-in-depth)"
+  value       = aws_network_acl.private_isolated.id
+}
+
+output "imds_access_alarm_arn" {
+  description = "CloudWatch alarm ARN for IMDS access attempts (security monitoring)"
+  value       = var.enable_flow_logs ? aws_cloudwatch_metric_alarm.imds_access_attempts[0].arn : null
+}
 
 # -----------------------------------------------------------------------------
 # Availability Zone Outputs

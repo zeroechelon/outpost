@@ -54,3 +54,37 @@ output "user_secrets_prefix" {
   description = "The prefix for per-user secrets namespace"
   value       = "/outpost/users/"
 }
+
+# -----------------------------------------------------------------------------
+# Rotation Outputs
+# -----------------------------------------------------------------------------
+
+output "rotation_enabled" {
+  description = "Whether secret rotation is enabled"
+  value       = var.rotation_enabled
+}
+
+output "rotation_lambda_arn" {
+  description = "ARN of the secret rotation Lambda function"
+  value       = var.rotation_enabled ? aws_lambda_function.rotation[0].arn : null
+}
+
+output "rotation_lambda_name" {
+  description = "Name of the secret rotation Lambda function"
+  value       = var.rotation_enabled ? aws_lambda_function.rotation[0].function_name : null
+}
+
+output "rotation_sns_topic_arn" {
+  description = "ARN of the SNS topic for rotation notifications"
+  value       = var.rotation_enabled ? aws_sns_topic.rotation_notifications[0].arn : null
+}
+
+output "rotation_enabled_secrets" {
+  description = "List of secrets with rotation enabled"
+  value       = var.rotation_enabled ? var.rotation_enabled_secrets : []
+}
+
+output "rotation_schedule_days" {
+  description = "Number of days between automatic rotations"
+  value       = var.rotation_enabled ? var.rotation_days : null
+}
