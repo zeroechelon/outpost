@@ -1,0 +1,179 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Outpost Workspace Management Tools",
+  "description": "MCP tool schemas for workspace lifecycle management in Outpost V2",
+  "version": "2.0.0",
+  "tools": [
+    {
+      "name": "outpost_list_workspaces",
+      "description": "List all workspaces for a user with metadata including size, repository, and access timestamps",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "description": "Unique identifier for the user",
+            "minLength": 1
+          }
+        },
+        "required": ["user_id"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "workspaces": {
+            "type": "array",
+            "description": "Array of workspace objects with metadata",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Unique workspace identifier"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "ISO 8601 timestamp of workspace creation"
+                },
+                "last_accessed": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "ISO 8601 timestamp of last workspace access"
+                },
+                "size_bytes": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Total size of workspace in bytes"
+                },
+                "repo": {
+                  "type": "string",
+                  "description": "GitHub repository in owner/repo format"
+                }
+              },
+              "required": ["id", "created_at", "last_accessed", "size_bytes", "repo"],
+              "additionalProperties": false
+            }
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total number of workspaces returned"
+          }
+        },
+        "required": ["workspaces", "count"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "outpost_delete_workspace",
+      "description": "Delete a specific workspace by ID. Removes all associated files and artifacts from storage.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "description": "Unique identifier for the user",
+            "minLength": 1
+          },
+          "workspace_id": {
+            "type": "string",
+            "description": "Unique identifier for the workspace to delete",
+            "minLength": 1
+          }
+        },
+        "required": ["user_id", "workspace_id"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether the deletion was successful"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable result message"
+          }
+        },
+        "required": ["success", "message"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "outpost_get_artifacts",
+      "description": "Retrieve artifacts from a completed dispatch run with presigned S3 URLs for download",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "dispatch_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "UUID of the dispatch run to retrieve artifacts from"
+          }
+        },
+        "required": ["dispatch_id"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "description": "Array of artifact objects with download URLs",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Artifact filename or identifier"
+                },
+                "type": {
+                  "type": "string",
+                  "description": "MIME type or artifact category (e.g., 'text/plain', 'application/json', 'patch', 'log')"
+                },
+                "size_bytes": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Size of the artifact in bytes"
+                },
+                "url": {
+                  "type": "string",
+                  "format": "uri",
+                  "description": "Presigned S3 URL for artifact download"
+                },
+                "expires_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "ISO 8601 timestamp when the presigned URL expires"
+                }
+              },
+              "required": ["name", "type", "size_bytes", "url", "expires_at"],
+              "additionalProperties": false
+            }
+          },
+          "dispatch_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "UUID of the dispatch run these artifacts belong to"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total number of artifacts returned"
+          }
+        },
+        "required": ["artifacts", "dispatch_id", "count"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

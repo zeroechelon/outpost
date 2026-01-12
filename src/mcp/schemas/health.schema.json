@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "outpost_health.schema.json",
+  "title": "Outpost Health Tool Schema",
+  "description": "Schema definitions for the outpost_health MCP tool",
+  "definitions": {
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "No input parameters required for health check"
+    },
+    "agentMetrics": {
+      "type": "object",
+      "properties": {
+        "pool_size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of workers in the agent pool"
+        },
+        "active_dispatches": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of currently active dispatches for this agent"
+        },
+        "success_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Success rate as a decimal between 0 and 1"
+        },
+        "avg_duration_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Average dispatch duration in seconds"
+        }
+      },
+      "required": ["pool_size", "active_dispatches", "success_rate", "avg_duration_seconds"],
+      "additionalProperties": false
+    },
+    "systemMetrics": {
+      "type": "object",
+      "properties": {
+        "cpu_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "CPU utilization percentage"
+        },
+        "memory_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Memory utilization percentage"
+        }
+      },
+      "required": ["cpu_percent", "memory_percent"],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["healthy", "degraded", "unhealthy"],
+          "description": "Overall health status of the Outpost system"
+        },
+        "agents": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/agentMetrics"
+          },
+          "description": "Per-agent health metrics keyed by agent name"
+        },
+        "dispatches_last_hour": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of dispatches in the last hour"
+        },
+        "system": {
+          "$ref": "#/definitions/systemMetrics",
+          "description": "System resource utilization metrics"
+        }
+      },
+      "required": ["status", "agents", "dispatches_last_hour", "system"],
+      "additionalProperties": false
+    }
+  }
+}
