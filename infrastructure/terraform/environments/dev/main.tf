@@ -163,3 +163,18 @@ module "monitoring" {
   environment      = "dev"
   ecs_cluster_name = module.ecs.cluster_name_computed
 }
+
+# -----------------------------------------------------------------------------
+# CloudTrail - Audit Logging
+# -----------------------------------------------------------------------------
+module "cloudtrail" {
+  source       = "../../modules/cloudtrail"
+  environment  = "dev"
+  project_name = "outpost"
+
+  tags = {
+    Project     = "outpost"
+    Environment = "dev"
+    Component   = "audit"
+  }
+}

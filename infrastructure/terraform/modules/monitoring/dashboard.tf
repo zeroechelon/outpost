@@ -544,6 +544,7 @@ resource "aws_cloudwatch_dashboard" "agent" {
       ],
 
       # Row 6: Agent-specific deep dive table
+      # Note: Using explicit array instead of flatten() due to CloudWatch metrics format requirements
       [
         {
           type   = "metric"
@@ -555,13 +556,23 @@ resource "aws_cloudwatch_dashboard" "agent" {
             title   = "Agent Health Summary"
             region  = local.region
             view    = "table"
-            metrics = flatten([
-              for agent in local.agents : [
-                ["Outpost/Tasks", "SuccessRate", "Agent", agent, "Environment", var.environment, { label = "${agent} Success %", stat = "Average", period = 3600 }],
-                ["Outpost/Tasks", "Duration", "Agent", agent, "Environment", var.environment, { label = "${agent} Avg Duration", stat = "Average", period = 3600 }],
-                ["Outpost/Tasks", "TasksCompleted", "Agent", agent, "Environment", var.environment, { label = "${agent} Completed", stat = "Sum", period = 3600 }]
-              ]
-            ])
+            metrics = [
+              ["Outpost/Tasks", "SuccessRate", "Agent", "claude", "Environment", var.environment, { label = "claude Success %", stat = "Average", period = 3600 }],
+              ["Outpost/Tasks", "Duration", "Agent", "claude", "Environment", var.environment, { label = "claude Avg Duration", stat = "Average", period = 3600 }],
+              ["Outpost/Tasks", "TasksCompleted", "Agent", "claude", "Environment", var.environment, { label = "claude Completed", stat = "Sum", period = 3600 }],
+              ["Outpost/Tasks", "SuccessRate", "Agent", "codex", "Environment", var.environment, { label = "codex Success %", stat = "Average", period = 3600 }],
+              ["Outpost/Tasks", "Duration", "Agent", "codex", "Environment", var.environment, { label = "codex Avg Duration", stat = "Average", period = 3600 }],
+              ["Outpost/Tasks", "TasksCompleted", "Agent", "codex", "Environment", var.environment, { label = "codex Completed", stat = "Sum", period = 3600 }],
+              ["Outpost/Tasks", "SuccessRate", "Agent", "gemini", "Environment", var.environment, { label = "gemini Success %", stat = "Average", period = 3600 }],
+              ["Outpost/Tasks", "Duration", "Agent", "gemini", "Environment", var.environment, { label = "gemini Avg Duration", stat = "Average", period = 3600 }],
+              ["Outpost/Tasks", "TasksCompleted", "Agent", "gemini", "Environment", var.environment, { label = "gemini Completed", stat = "Sum", period = 3600 }],
+              ["Outpost/Tasks", "SuccessRate", "Agent", "aider", "Environment", var.environment, { label = "aider Success %", stat = "Average", period = 3600 }],
+              ["Outpost/Tasks", "Duration", "Agent", "aider", "Environment", var.environment, { label = "aider Avg Duration", stat = "Average", period = 3600 }],
+              ["Outpost/Tasks", "TasksCompleted", "Agent", "aider", "Environment", var.environment, { label = "aider Completed", stat = "Sum", period = 3600 }],
+              ["Outpost/Tasks", "SuccessRate", "Agent", "grok", "Environment", var.environment, { label = "grok Success %", stat = "Average", period = 3600 }],
+              ["Outpost/Tasks", "Duration", "Agent", "grok", "Environment", var.environment, { label = "grok Avg Duration", stat = "Average", period = 3600 }],
+              ["Outpost/Tasks", "TasksCompleted", "Agent", "grok", "Environment", var.environment, { label = "grok Completed", stat = "Sum", period = 3600 }]
+            ]
           }
         }
       ]

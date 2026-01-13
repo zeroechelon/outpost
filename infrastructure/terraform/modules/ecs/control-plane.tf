@@ -224,6 +224,27 @@ resource "aws_iam_role_policy" "control_plane_logs" {
   })
 }
 
+# EFS access for control plane (health check and workspace management)
+resource "aws_iam_role_policy" "control_plane_efs" {
+  name = "efs-access"
+  role = aws_iam_role.control_plane_task.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "elasticfilesystem:DescribeFileSystems",
+          "elasticfilesystem:DescribeMountTargets",
+          "elasticfilesystem:DescribeAccessPoints"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 # -----------------------------------------------------------------------------
 # Control Plane ECS Service
 # -----------------------------------------------------------------------------
