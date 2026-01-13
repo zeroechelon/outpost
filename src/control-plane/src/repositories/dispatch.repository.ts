@@ -52,6 +52,7 @@ export interface DispatchRecord {
  * Input for creating a new dispatch
  */
 export interface CreateDispatchInput {
+  readonly dispatchId?: string;
   readonly userId: string;
   readonly agent: AgentType;
   readonly modelId: string;
@@ -153,7 +154,7 @@ export class DispatchRepository {
     const now = new Date();
 
     const record: DispatchRecord = {
-      dispatchId: uuidv4(),
+      dispatchId: input.dispatchId ?? uuidv4(),
       userId: input.userId,
       agent: input.agent,
       modelId: input.modelId,

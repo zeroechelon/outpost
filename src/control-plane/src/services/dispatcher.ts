@@ -397,26 +397,17 @@ export class DispatcherOrchestrator {
     request: z.infer<typeof DispatchRequestSchema>,
     taskSelection: TaskSelectionResult
   ): Promise<DispatchRecord> {
-    // Since DispatchRepository.create generates its own UUID,
-    // we need to use updateStatus to set initial state with our ULID
-    // For now, we'll use the repository's create and note this for future refactor
-    // TODO: Refactor DispatchRepository to accept custom dispatchId
-
     const record = await this.dispatchRepository.create({
+      dispatchId,
       userId: request.userId,
       agent: request.agent,
       modelId: taskSelection.modelId,
       task: request.task,
     });
 
-    // Note: In production, we'd update the repository to accept custom IDs
-    // For now, we log the mapping
     this.logger.debug(
-      {
-        ulidDispatchId: dispatchId,
-        repoDispatchId: record.dispatchId,
-      },
-      'Dispatch record created with repository ID'
+      { dispatchId: record.dispatchId },
+      'Dispatch record created'
     );
 
     return record;
