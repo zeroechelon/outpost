@@ -127,6 +127,32 @@ module "ecs" {
   enable_efs          = true
   efs_file_system_id  = module.efs.filesystem_id
   efs_access_point_id = module.efs.root_access_point_id
+
+  # ALB configuration
+  enable_alb            = true
+  alb_target_group_arn  = module.alb.target_group_arn
+  alb_security_group_id = module.alb.security_group_id
+}
+
+# -----------------------------------------------------------------------------
+# ALB - Application Load Balancer for Control Plane
+# -----------------------------------------------------------------------------
+module "alb" {
+  source = "../../modules/alb"
+
+  environment       = "dev"
+  project           = "outpost"
+  vpc_id            = module.vpc.vpc_id
+  vpc_cidr          = var.vpc_cidr
+  public_subnet_ids = module.vpc.public_subnet_ids
+
+  alb_name = "outpost-control-plane"
+
+  tags = {
+    Project     = "outpost"
+    Environment = "dev"
+    Component   = "alb"
+  }
 }
 
 # -----------------------------------------------------------------------------

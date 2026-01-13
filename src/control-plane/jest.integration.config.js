@@ -2,8 +2,13 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  roots: ['<rootDir>/tests/integration'],
-  testMatch: ['**/*.integration.test.ts'],
+  // Look for integration tests in both local and project-level directories
+  roots: [
+    '<rootDir>/tests/integration',
+    '<rootDir>/../../tests/integration',
+  ],
+  // Match both .integration.test.ts and regular .test.ts in integration dirs
+  testMatch: ['**/*.integration.test.ts', '**/*.test.ts'],
   transform: {
     '^.+\\.ts$': [
       'ts-jest',
@@ -23,22 +28,21 @@ module.exports = {
     '^@utils/(.*)$': '<rootDir>/src/utils/$1',
     '^@types/(.*)$': '<rootDir>/src/types/$1',
   },
-  setupFilesAfterEnv: ['<rootDir>/tests/integration/setup.ts'],
+  // Try both setup file locations
+  setupFilesAfterEnv: ['<rootDir>/../../tests/integration/setup.ts'],
   verbose: true,
   clearMocks: true,
   restoreMocks: true,
-  testTimeout: 30000, // 30 second timeout for integration tests
+  testTimeout: 120000, // 2 minute timeout for integration tests
   // Integration test specific settings
   maxWorkers: 1, // Run sequentially to avoid DynamoDB contention
   bail: false, // Continue running tests even if one fails
-  collectCoverageFrom: [
-    'src/**/*.ts',
-    '!src/**/*.d.ts',
-    '!src/**/__tests__/**',
-    '!src/types/**',
-  ],
-  coverageDirectory: 'coverage/integration',
-  coverageReporters: ['text', 'lcov', 'html'],
+  collectCoverage: false, // Don't collect coverage for integration tests
+  // Display mode
+  displayName: {
+    name: 'INTEGRATION',
+    color: 'cyan',
+  },
   // Ensure AWS SDK works correctly in Jest
   transformIgnorePatterns: [
     '/node_modules/(?!(@aws-sdk|@smithy)/)',

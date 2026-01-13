@@ -236,6 +236,28 @@ variable "efs_access_point_id" {
 }
 
 # -----------------------------------------------------------------------------
+# ALB Configuration
+# -----------------------------------------------------------------------------
+
+variable "enable_alb" {
+  description = "Enable ALB integration for control plane"
+  type        = bool
+  default     = false
+}
+
+variable "alb_target_group_arn" {
+  description = "ARN of the ALB target group for control plane"
+  type        = string
+  default     = ""
+}
+
+variable "alb_security_group_id" {
+  description = "Security group ID of the ALB (for ingress rules)"
+  type        = string
+  default     = ""
+}
+
+# -----------------------------------------------------------------------------
 # Tags
 # -----------------------------------------------------------------------------
 

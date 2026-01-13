@@ -3,6 +3,10 @@
 # Performance test results (keep .gitkeep)
 tests/performance/results/*.json
 
+# Security tests
+tests/security/node_modules/
+tests/security/coverage/
+
 # Terraform
 **/.terraform/
 *.tfstate

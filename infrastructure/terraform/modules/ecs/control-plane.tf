@@ -53,7 +53,8 @@ resource "aws_ecs_task_definition" "control_plane" {
         { name = "DYNAMODB_TENANTS_TABLE", value = var.tenants_table_name },
         { name = "DYNAMODB_AUDIT_TABLE", value = var.audit_table_name },
         { name = "SQS_JOBS_QUEUE_URL", value = var.jobs_queue_url },
-        { name = "S3_RESULTS_BUCKET", value = var.results_bucket_name }
+        { name = "S3_RESULTS_BUCKET", value = var.results_bucket_name },
+        { name = "EFS_FILE_SYSTEM_ID", value = var.efs_file_system_id }
       ]
 
       logConfiguration = {
@@ -240,6 +241,16 @@ resource "aws_ecs_service" "control_plane" {
     assign_public_ip = false
   }
 
+  # ALB integration (when enabled)
+  dynamic "load_balancer" {
+    for_each = var.enable_alb ? [1] : []
+    content {
+      target_group_arn = var.alb_target_group_arn
+      container_name   = "control-plane"
+      container_port   = 3000
+    }
+  }
+
   # Deployment configuration
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
@@ -314,8 +325,9 @@ resource "aws_security_group_rule" "control_plane_egress_dns_tcp" {
   description       = "Allow DNS TCP outbound"
 }
 
-# Ingress: Port 3000 from VPC (for future ALB/API Gateway integration)
+# Ingress: Port 3000 from VPC (when ALB is disabled)
 resource "aws_security_group_rule" "control_plane_ingress_http" {
+  count             = var.enable_alb ? 0 : 1
   type              = "ingress"
   from_port         = 3000
   to_port           = 3000
@@ -323,6 +335,18 @@ resource "aws_security_group_rule" "control_plane_ingress_http" {
   cidr_blocks       = ["10.0.0.0/16"] # VPC CIDR
   security_group_id = aws_security_group.control_plane.id
   description       = "Allow HTTP inbound from VPC"
+}
+
+# Ingress: Port 3000 from ALB (when ALB is enabled)
+resource "aws_security_group_rule" "control_plane_ingress_from_alb" {
+  count                    = var.enable_alb ? 1 : 0
+  type                     = "ingress"
+  from_port                = 3000
+  to_port                  = 3000
+  protocol                 = "tcp"
+  source_security_group_id = var.alb_security_group_id
+  security_group_id        = aws_security_group.control_plane.id
+  description              = "Allow HTTP inbound from ALB"
 }
 
 # -----------------------------------------------------------------------------
