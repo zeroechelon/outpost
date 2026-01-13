@@ -27,40 +27,113 @@ provider "aws" {
   }
 }
 
-# Module instantiations for dev environment
-# module "vpc" {
-#   source      = "../../modules/vpc"
-#   environment = "dev"
-#   # Dev-specific: single NAT gateway for cost savings
-#   single_nat_gateway = true
-# }
+# =============================================================================
+# Core Infrastructure Modules
+# =============================================================================
 
-# module "ecr" {
-#   source      = "../../modules/ecr"
-#   environment = "dev"
-# }
+# -----------------------------------------------------------------------------
+# VPC - Network Foundation
+# -----------------------------------------------------------------------------
+module "vpc" {
+  source             = "../../modules/vpc"
+  environment        = "dev"
+  availability_zones = ["us-east-1a", "us-east-1b"]
+  # Dev-specific: single NAT gateway for cost savings
+  single_nat_gateway = true
+}
 
-# module "efs" {
-#   source      = "../../modules/efs"
-#   environment = "dev"
-#   vpc_id      = module.vpc.vpc_id
-#   subnet_ids  = module.vpc.private_subnet_ids
-# }
+# -----------------------------------------------------------------------------
+# ECR - Container Registry
+# -----------------------------------------------------------------------------
+module "ecr" {
+  source      = "../../modules/ecr"
+  environment = "dev"
+}
 
-# module "secrets" {
-#   source      = "../../modules/secrets"
-#   environment = "dev"
-# }
+# -----------------------------------------------------------------------------
+# SQS - Job Queue
+# -----------------------------------------------------------------------------
+module "sqs" {
+  source      = "../../modules/sqs"
+  environment = "dev"
+}
 
-# module "ecs" {
-#   source      = "../../modules/ecs"
-#   environment = "dev"
-#   vpc_id      = module.vpc.vpc_id
-#   subnet_ids  = module.vpc.private_subnet_ids
-# }
+# -----------------------------------------------------------------------------
+# DynamoDB - Data Storage
+# -----------------------------------------------------------------------------
+module "dynamodb" {
+  source      = "../../modules/dynamodb"
+  environment = "dev"
+}
 
-# module "monitoring" {
-#   source           = "../../modules/monitoring"
-#   environment      = "dev"
-#   ecs_cluster_name = module.ecs.cluster_name
-# }
+# -----------------------------------------------------------------------------
+# S3 - Artifact Storage
+# -----------------------------------------------------------------------------
+module "s3" {
+  source      = "../../modules/s3"
+  environment = "dev"
+}
+
+# -----------------------------------------------------------------------------
+# Secrets Manager - API Keys & Credentials
+# -----------------------------------------------------------------------------
+module "secrets" {
+  source      = "../../modules/secrets"
+  environment = "dev"
+}
+
+# -----------------------------------------------------------------------------
+# EFS - Workspace Persistence
+# -----------------------------------------------------------------------------
+module "efs" {
+  source                = "../../modules/efs"
+  environment           = "dev"
+  vpc_id                = module.vpc.vpc_id
+  private_subnet_ids    = module.vpc.private_subnet_ids
+  ecs_security_group_id = module.vpc.ecs_tasks_security_group_id
+}
+
+# -----------------------------------------------------------------------------
+# ECS - Container Orchestration
+# -----------------------------------------------------------------------------
+module "ecs" {
+  source             = "../../modules/ecs"
+  environment        = "dev"
+  vpc_id             = module.vpc.vpc_id
+  private_subnet_ids = module.vpc.private_subnet_ids
+
+  # ECR repository URLs
+  ecr_repository_urls = module.ecr.repository_urls
+
+  # SQS configuration
+  jobs_queue_url = module.sqs.jobs_queue_url
+  jobs_queue_arn = module.sqs.jobs_queue_arn
+
+  # DynamoDB configuration
+  jobs_table_name    = module.dynamodb.jobs_table_name
+  jobs_table_arn     = module.dynamodb.jobs_table_arn
+  tenants_table_name = module.dynamodb.tenants_table_name
+  tenants_table_arn  = module.dynamodb.tenants_table_arn
+  audit_table_name   = module.dynamodb.audit_table_name
+  audit_table_arn    = module.dynamodb.audit_table_arn
+
+  # S3 configuration
+  results_bucket_name = module.s3.bucket_name
+
+  # Secrets configuration
+  kms_key_arn = module.secrets.kms_key_arn
+
+  # EFS configuration
+  enable_efs          = true
+  efs_file_system_id  = module.efs.filesystem_id
+  efs_access_point_id = module.efs.root_access_point_id
+}
+
+# -----------------------------------------------------------------------------
+# Monitoring - CloudWatch & Alerts
+# -----------------------------------------------------------------------------
+module "monitoring" {
+  source           = "../../modules/monitoring"
+  environment      = "dev"
+  ecs_cluster_name = module.ecs.cluster_name_computed
+}

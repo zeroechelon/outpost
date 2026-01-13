@@ -33,7 +33,7 @@ USER outpost
 
 # Install Aider via pip (user install to avoid permission issues)
 # Using --break-system-packages for Ubuntu 24.04 PEP 668 compliance
-RUN pip3 install --user --no-cache-dir aider-chat \
+RUN pip3 install --user --no-cache-dir --break-system-packages aider-chat \
     && aider --version
 
 # Copy initialization script

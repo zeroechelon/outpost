@@ -8,7 +8,7 @@ import { resetDocClient } from '../repositories/base.repository.js';
 
 // Set test environment variables
 process.env['NODE_ENV'] = 'test';
-process.env['LOG_LEVEL'] = 'silent';
+process.env['LOG_LEVEL'] = 'error'; // Minimal logging during tests
 process.env['LOG_PRETTY'] = 'false';
 
 // Reset singletons before each test

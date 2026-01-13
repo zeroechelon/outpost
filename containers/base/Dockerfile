@@ -62,9 +62,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     # ripgrep for fast code search
     ripgrep \
-    # Python 3.11 with pip and venv
-    python3.11 \
-    python3.11-venv \
+    # Python 3.12 with pip and venv (Ubuntu 24.04 default)
+    python3 \
+    python3-venv \
     python3-pip \
     # Additional utilities needed by agents
     openssh-client \
@@ -75,15 +75,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Set Python 3.11 as default python3
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
-    && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+# Set Python 3 as default python (Ubuntu 24.04 uses Python 3.12)
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 1
 
-# Copy Node.js from builder stage
-COPY --from=builder /usr/bin/node /usr/bin/node
-COPY --from=builder /usr/bin/npm /usr/bin/npm
-COPY --from=builder /usr/bin/npx /usr/bin/npx
-COPY --from=builder /usr/lib/node_modules /usr/lib/node_modules
+# Install Node.js 20 LTS directly in runtime stage (cleaner than multi-stage copy)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy Rust toolchain from builder stage
 ENV RUSTUP_HOME=/usr/local/rustup \
@@ -93,8 +91,9 @@ COPY --from=builder /usr/local/rustup /usr/local/rustup
 COPY --from=builder /usr/local/cargo /usr/local/cargo
 
 # Create non-root user with proper home directory
-RUN groupadd --gid 1000 outpost \
-    && useradd --uid 1000 --gid 1000 --shell /bin/bash --create-home outpost
+# Use --force flag to handle existing GID/UID in Ubuntu 24.04 base image
+RUN groupadd --gid 1000 --force outpost \
+    && useradd --uid 1000 --gid 1000 --shell /bin/bash --create-home --non-unique outpost || true
 
 # Create workspace directory with proper permissions
 RUN mkdir -p /workspace \

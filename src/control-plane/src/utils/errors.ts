@@ -5,7 +5,7 @@
 export abstract class OutpostError extends Error {
   abstract readonly code: string;
   abstract readonly statusCode: number;
-  readonly details?: Record<string, unknown>;
+  readonly details: Record<string, unknown> | undefined;
 
   constructor(message: string, details?: Record<string, unknown>) {
     super(message);

@@ -32,7 +32,8 @@ RUN mkdir -p /opt/agents/grok \
 # Install Python packages required for Grok agent
 # - requests: HTTP client for API calls
 # - sseclient-py: Server-Sent Events for streaming responses
-RUN pip3 install --no-cache-dir \
+# Using --break-system-packages for Ubuntu 24.04 PEP 668 compliance
+RUN pip3 install --no-cache-dir --break-system-packages \
     requests==2.31.0 \
     sseclient-py==1.8.0
 

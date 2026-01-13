@@ -13,7 +13,7 @@ export function requestLogger(req: Request, res: Response, next: NextFunction): 
   const startTime = Date.now();
 
   // Attach request ID to request object
-  (req as { requestId: string }).requestId = requestId;
+  (req as unknown as { requestId: string }).requestId = requestId;
 
   // Set request ID header on response
   res.setHeader('X-Request-ID', requestId);

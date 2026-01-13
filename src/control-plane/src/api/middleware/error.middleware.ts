@@ -51,9 +51,14 @@ export function errorHandler(
       'Outpost error'
     );
 
+    const errorJson = error.toJSON();
     const response: ApiResponse<never> = {
       success: false,
-      error: error.toJSON() as ApiError,
+      error: {
+        code: String(errorJson['code']),
+        message: String(errorJson['message']),
+        details: errorJson['details'] as Record<string, unknown> | undefined,
+      },
       meta: {
         requestId,
         timestamp: new Date().toISOString(),

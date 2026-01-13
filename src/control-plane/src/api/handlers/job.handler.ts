@@ -44,7 +44,8 @@ export class JobHandler {
     next: NextFunction
   ): Promise<void> {
     try {
-      const jobId = req.params['jobId'];
+      const jobIdParam = req.params['jobId'];
+      const jobId = Array.isArray(jobIdParam) ? jobIdParam[0] : jobIdParam;
       if (jobId === undefined) {
         throw new Error('Job ID required');
       }
@@ -105,7 +106,8 @@ export class JobHandler {
     next: NextFunction
   ): Promise<void> {
     try {
-      const jobId = req.params['jobId'];
+      const jobIdParam = req.params['jobId'];
+      const jobId = Array.isArray(jobIdParam) ? jobIdParam[0] : jobIdParam;
       if (jobId === undefined) {
         throw new Error('Job ID required');
       }

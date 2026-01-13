@@ -111,11 +111,11 @@ export class JobRepository {
         updateExpressions.push('workerId = :workerId');
         expressionAttributeValues[':workerId'] = updates.workerId;
       }
-      if (updates.startedAt !== undefined) {
+      if (updates.startedAt !== undefined && updates.startedAt !== null) {
         updateExpressions.push('startedAt = :startedAt');
         expressionAttributeValues[':startedAt'] = updates.startedAt.toISOString();
       }
-      if (updates.completedAt !== undefined) {
+      if (updates.completedAt !== undefined && updates.completedAt !== null) {
         updateExpressions.push('completedAt = :completedAt');
         expressionAttributeValues[':completedAt'] = updates.completedAt.toISOString();
       }
@@ -158,7 +158,7 @@ export class JobRepository {
   async listByTenant(
     tenantId: string,
     query: ListJobsQuery
-  ): Promise<{ items: JobModel[]; nextCursor?: string }> {
+  ): Promise<{ items: JobModel[]; nextCursor?: string | undefined }> {
     const docClient = getDocClient();
 
     const params: QueryCommandInput = {

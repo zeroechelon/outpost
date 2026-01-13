@@ -416,4 +416,100 @@ export class DispatchRepository {
       throw error;
     }
   }
+
+  /**
+   * Get dispatch metrics for health monitoring
+   * Returns counts and aggregate statistics for recent dispatches
+   */
+  async getDispatchMetrics(sinceHoursAgo: number = 1): Promise<{
+    totalDispatches: number;
+    byStatus: Record<DispatchStatus, number>;
+    byAgent: Record<string, { total: number; completed: number; failed: number; avgDurationMs: number }>;
+  }> {
+    const docClient = getDocClient();
+    const sinceTime = new Date(Date.now() - sinceHoursAgo * 60 * 60 * 1000);
+
+    // Scan with time filter (Note: for production scale, use a GSI on started_at)
+    // This is acceptable for health checks due to 30-second caching
+    const result = await docClient.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        // Use scan-like query by querying all users (requires GSI adjustment for scale)
+        // For now, use simple scan with filter - cached metrics make this acceptable
+        KeyConditionExpression: undefined,
+        FilterExpression: 'started_at >= :sinceTime',
+        ExpressionAttributeValues: {
+          ':sinceTime': sinceTime.toISOString(),
+        },
+      } as unknown as QueryCommandInput)
+    ).catch(async () => {
+      // Fallback: Scan the table if query fails (GSI may not exist)
+      const { ScanCommand } = await import('@aws-sdk/lib-dynamodb');
+      return docClient.send(
+        new ScanCommand({
+          TableName: this.tableName,
+          FilterExpression: 'started_at >= :sinceTime',
+          ExpressionAttributeValues: {
+            ':sinceTime': sinceTime.toISOString(),
+          },
+        })
+      );
+    });
+
+    const items = (result.Items ?? []).map((item) => fromDynamoItem(item));
+
+    // Calculate metrics
+    const byStatus: Record<DispatchStatus, number> = {
+      PENDING: 0,
+      RUNNING: 0,
+      COMPLETED: 0,
+      FAILED: 0,
+      CANCELLED: 0,
+      TIMEOUT: 0,
+    };
+
+    const byAgent: Record<string, { total: number; completed: number; failed: number; totalDurationMs: number; completedCount: number }> = {};
+
+    for (const item of items) {
+      // Count by status
+      byStatus[item.status]++;
+
+      // Initialize agent stats if needed
+      if (byAgent[item.agent] === undefined) {
+        byAgent[item.agent] = { total: 0, completed: 0, failed: 0, totalDurationMs: 0, completedCount: 0 };
+      }
+
+      const agentStats = byAgent[item.agent];
+      if (agentStats !== undefined) {
+        agentStats.total++;
+
+        if (item.status === 'COMPLETED') {
+          agentStats.completed++;
+          if (item.endedAt !== null) {
+            agentStats.totalDurationMs += item.endedAt.getTime() - item.startedAt.getTime();
+            agentStats.completedCount++;
+          }
+        } else if (item.status === 'FAILED' || item.status === 'TIMEOUT') {
+          agentStats.failed++;
+        }
+      }
+    }
+
+    // Convert to final format with average duration
+    const byAgentFinal: Record<string, { total: number; completed: number; failed: number; avgDurationMs: number }> = {};
+    for (const [agent, stats] of Object.entries(byAgent)) {
+      byAgentFinal[agent] = {
+        total: stats.total,
+        completed: stats.completed,
+        failed: stats.failed,
+        avgDurationMs: stats.completedCount > 0 ? Math.round(stats.totalDurationMs / stats.completedCount) : 0,
+      };
+    }
+
+    return {
+      totalDispatches: items.length,
+      byStatus,
+      byAgent: byAgentFinal,
+    };
+  }
 }

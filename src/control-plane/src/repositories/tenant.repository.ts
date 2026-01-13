@@ -111,7 +111,6 @@ export class TenantRepository {
         TableName: this.tableName,
         Key: { tenantId },
         UpdateExpression: 'SET currentUsage.concurrentJobs = currentUsage.concurrentJobs - :dec',
-        ExpressionAttributeValues: { ':dec': 1 },
         ConditionExpression: 'currentUsage.concurrentJobs > :zero',
         ExpressionAttributeValues: { ':dec': 1, ':zero': 0 },
         ReturnValues: 'ALL_NEW',

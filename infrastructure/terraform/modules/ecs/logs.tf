@@ -58,12 +58,9 @@ resource "aws_cloudwatch_log_metric_filter" "agent_errors" {
   log_group_name = each.value.name
 
   metric_transformation {
-    name      = "AgentErrors"
+    name      = "AgentErrors-${each.key}"
     namespace = "Outpost"
     value     = "1"
-    dimensions = {
-      Agent = each.key
-    }
   }
 }
 

@@ -104,8 +104,8 @@ export class DispatcherService {
 
   async listJobs(
     tenantId: string,
-    query: { status?: string; agent?: AgentType; cursor?: string; limit?: number }
-  ): Promise<{ items: JobModel[]; nextCursor?: string }> {
+    query: { status?: string | undefined; agent?: AgentType | undefined; cursor?: string | undefined; limit?: number | undefined }
+  ): Promise<{ items: JobModel[]; nextCursor?: string | undefined }> {
     return this.jobRepository.listByTenant(tenantId, {
       status: query.status as JobModel['status'] | undefined,
       agent: query.agent,

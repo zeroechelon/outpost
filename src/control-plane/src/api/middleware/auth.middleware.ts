@@ -41,10 +41,10 @@ export async function authMiddleware(
     void apiKeyRepository.recordUsage(keyRecord.apiKeyId);
 
     // Attach auth info to request
-    const authenticatedReq = req as AuthenticatedRequest;
-    (authenticatedReq as { tenantId: string }).tenantId = keyRecord.tenantId;
-    (authenticatedReq as { apiKeyId: string }).apiKeyId = keyRecord.apiKeyId;
-    (authenticatedReq as { scopes: readonly string[] }).scopes = keyRecord.scopes;
+    const authenticatedReq = req as unknown as AuthenticatedRequest;
+    (authenticatedReq as unknown as { tenantId: string }).tenantId = keyRecord.tenantId;
+    (authenticatedReq as unknown as { apiKeyId: string }).apiKeyId = keyRecord.apiKeyId;
+    (authenticatedReq as unknown as { scopes: readonly string[] }).scopes = keyRecord.scopes;
 
     logger.debug(
       { tenantId: keyRecord.tenantId, apiKeyId: keyRecord.apiKeyId },

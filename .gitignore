@@ -1,5 +1,8 @@
 .aider*
 
+# Performance test results (keep .gitkeep)
+tests/performance/results/*.json
+
 # Terraform
 **/.terraform/
 *.tfstate

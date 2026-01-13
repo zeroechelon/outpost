@@ -77,9 +77,9 @@ export class StatusTrackerService {
 
   async getJobStatus(jobId: string): Promise<{
     status: JobStatus;
-    progress?: number;
-    startedAt?: Date;
-    completedAt?: Date;
+    progress?: number | undefined;
+    startedAt?: Date | undefined;
+    completedAt?: Date | undefined;
   }> {
     const job = await this.jobRepository.getById(jobId);
 
