@@ -1266,7 +1266,7 @@ verification:
       # Wait and verify error in logs
       sleep 60
 
-      # Restore real API key
+      # Restore real API key (use environment variable ANTHROPIC_API_KEY)
       aws secretsmanager put-secret-value \
         --secret-id /outpost/api-keys/anthropic \
         --secret-string "$ANTHROPIC_API_KEY" \
