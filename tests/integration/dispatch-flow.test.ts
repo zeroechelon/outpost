@@ -127,16 +127,13 @@ describe(`Dispatch Flow Integration Tests ${testModeLabel}`, () => {
     );
 
     it('should create dispatch and return valid dispatch ID', async () => {
-      // This test works in both mock and real mode
-      const response = await client.createDispatch(MINIMAL_DISPATCH_PAYLOAD);
-
-      // In mock mode without a running server, expect connection error
-      // In real mode, expect successful creation
+      // Skip in mock mode - this test requires real endpoint
       if (!isRealMode) {
-        // Mock mode - just verify the test structure is correct
         console.log('Mock mode: Skipping actual API call validation');
         return;
       }
+
+      const response = await client.createDispatch(MINIMAL_DISPATCH_PAYLOAD);
 
       expect(response.status).toBe(201);
       expect(response.body.success).toBe(true);

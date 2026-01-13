@@ -17,46 +17,58 @@ import { describe, it, expect, beforeEach, jest, beforeAll, afterAll } from '@je
 import { v4 as uuidv4 } from 'uuid';
 import { generateTestId, TEST_USER_ID, TEST_TENANT_ID } from './setup.js';
 
-// Mock S3 client
+// Create mock functions that will be hoisted properly
+// These are created using a factory pattern to avoid TDZ issues
 const mockS3Send = jest.fn();
 const mockGetSignedUrl = jest.fn();
-
-jest.mock('@aws-sdk/client-s3', () => ({
-  S3Client: jest.fn().mockImplementation(() => ({
-    send: mockS3Send,
-  })),
-  PutObjectCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'PutObjectCommand' })),
-  GetObjectCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'GetObjectCommand' })),
-  HeadObjectCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'HeadObjectCommand' })),
-  DeleteObjectsCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'DeleteObjectsCommand' })),
-  ListObjectsV2Command: jest.fn().mockImplementation((params) => ({ ...params, _type: 'ListObjectsV2Command' })),
-  CreateMultipartUploadCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'CreateMultipartUploadCommand' })),
-  UploadPartCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'UploadPartCommand' })),
-  CompleteMultipartUploadCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'CompleteMultipartUploadCommand' })),
-  AbortMultipartUploadCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'AbortMultipartUploadCommand' })),
-}));
-
-jest.mock('@aws-sdk/s3-request-presigner', () => ({
-  getSignedUrl: mockGetSignedUrl,
-}));
-
-// Mock DynamoDB for service tests
 const mockDynamoSend = jest.fn();
-jest.mock('@aws-sdk/lib-dynamodb', () => ({
-  DynamoDBDocumentClient: {
-    from: jest.fn().mockReturnValue({
-      send: mockDynamoSend,
-    }),
-  },
-  GetCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'GetCommand' })),
-  PutCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'PutCommand' })),
-  UpdateCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'UpdateCommand' })),
-  QueryCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'QueryCommand' })),
-}));
 
+// Mock DynamoDB first (before S3) to avoid import order issues
 jest.mock('@aws-sdk/client-dynamodb', () => ({
   DynamoDBClient: jest.fn().mockImplementation(() => ({})),
 }));
+
+jest.mock('@aws-sdk/lib-dynamodb', () => {
+  // Access the mock from the outer scope through a getter
+  const getMockDynamoSend = () => mockDynamoSend;
+  return {
+    DynamoDBDocumentClient: {
+      from: jest.fn().mockImplementation(() => ({
+        send: (...args: unknown[]) => getMockDynamoSend()(...args),
+      })),
+    },
+    GetCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'GetCommand' })),
+    PutCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'PutCommand' })),
+    UpdateCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'UpdateCommand' })),
+    QueryCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'QueryCommand' })),
+  };
+});
+
+// Mock S3 client
+jest.mock('@aws-sdk/client-s3', () => {
+  const getMockS3Send = () => mockS3Send;
+  return {
+    S3Client: jest.fn().mockImplementation(() => ({
+      send: (...args: unknown[]) => getMockS3Send()(...args),
+    })),
+    PutObjectCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'PutObjectCommand' })),
+    GetObjectCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'GetObjectCommand' })),
+    HeadObjectCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'HeadObjectCommand' })),
+    DeleteObjectsCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'DeleteObjectsCommand' })),
+    ListObjectsV2Command: jest.fn().mockImplementation((params) => ({ ...params, _type: 'ListObjectsV2Command' })),
+    CreateMultipartUploadCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'CreateMultipartUploadCommand' })),
+    UploadPartCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'UploadPartCommand' })),
+    CompleteMultipartUploadCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'CompleteMultipartUploadCommand' })),
+    AbortMultipartUploadCommand: jest.fn().mockImplementation((params) => ({ ...params, _type: 'AbortMultipartUploadCommand' })),
+  };
+});
+
+jest.mock('@aws-sdk/s3-request-presigner', () => {
+  const getMockGetSignedUrl = () => mockGetSignedUrl;
+  return {
+    getSignedUrl: (...args: unknown[]) => getMockGetSignedUrl()(...args),
+  };
+});
 
 // Import after mocking
 import {
