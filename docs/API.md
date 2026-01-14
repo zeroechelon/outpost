@@ -1,15 +1,42 @@
 # Outpost Control Plane API Reference
 
-> **Document Status**: Blueprint T5.1 Deliverable
-> **Last Updated**: 2026-01-13
-> **Version**: 2.0.0
-> **Base URL**: `https://api.outpost.dev`
+> **Multi-Agent Fleet Orchestration Platform**
+
+**Document Version:** 2.0.0
+**Last Updated:** 2026-01-14
+**Primary Architect:** Richie G. Suarez, Zero Echelon LLC
+
+---
+
+## Base URL
+
+**Production:**
+```
+http://outpost-control-plane-dev-140603164.us-east-1.elb.amazonaws.com
+```
+
+**Future (with custom domain):**
+```
+https://api.outpost.dev
+```
 
 ---
 
 ## Overview
 
-The Outpost Control Plane API provides RESTful endpoints for dispatching tasks to AI coding agents, managing workspaces, and retrieving execution artifacts. All authenticated endpoints require API key authentication.
+The Outpost Control Plane API provides RESTful endpoints for dispatching tasks to AI coding agents, managing workspaces, and retrieving execution artifacts. It is the primary interface for the multi-agent fleet orchestration platform.
+
+**Key Features:**
+- Dispatch tasks to 5 specialized AI agents (Claude, Codex, Gemini, Aider, Grok)
+- Cryptographic tenant isolation with per-tenant API keys
+- Workspace persistence options (ephemeral or persistent)
+- Context injection for continuity-aware execution
+- Real-time status polling with log streaming
+
+**Ecosystem Integration:**
+- **MCPify:** HTTP provider routes MCP tool calls to this API
+- **Blueprint:** Python client executes generated specifications via this API
+- **Ledger:** Cost events emitted for billing integration
 
 ---
 
@@ -19,22 +46,24 @@ All endpoints except health checks require authentication via API key.
 
 ### Authentication Methods
 
-**Bearer Token (Recommended)**
+**X-API-Key Header (Recommended)**
 ```
-Authorization: Bearer op_live_xxxxxxxxxxxxxxxxxxxx
+X-API-Key: otp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-**X-API-Key Header**
+**Bearer Token**
 ```
-X-API-Key: op_live_xxxxxxxxxxxxxxxxxxxx
+Authorization: Bearer otp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 ### API Key Format
 
 ```
-op_live_xxxxxxxxxxxxxxxxxxxx   # Production key
-op_test_xxxxxxxxxxxxxxxxxxxx   # Test/sandbox key
+otp_xxxxxxxx...   # 72 characters total (otp_ prefix + 64 hex chars)
 ```
+
+**Key Generation:** Keys are generated using `otp_` prefix + 32 random bytes (hex encoded).
+**Storage:** Only SHA-256 hash is stored; plaintext key is shown once at creation.
 
 ### Scopes
 
@@ -740,6 +769,18 @@ Webhook support for dispatch lifecycle events is planned for a future release.
 
 ---
 
-*Outpost Control Plane API v2.0.0*
-*Blueprint Task: T5.1*
-*Generated: 2026-01-13*
+## Related Documentation
+
+- [Architecture Overview](ARCHITECTURE_OVERVIEW.md) - System design
+- [Deployment Guide](DEPLOYMENT.md) - Production deployment
+- [Troubleshooting](TROUBLESHOOTING.md) - Common issues and solutions
+- [Zero Echelon Ecosystem](ZERO_ECHELON_ECOSYSTEM.md) - Product integrations
+
+---
+
+**Primary Architect:** Richie G. Suarez
+**Organization:** Zero Echelon LLC
+
+---
+
+*Outpost Control Plane API v2.0.0 — Multi-Agent Fleet Orchestration Platform*
