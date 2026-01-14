@@ -63,8 +63,11 @@ export GROK_TIMEOUT="${GROK_TIMEOUT:-300}"
 # GitHub token configuration for private repository access
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then
     echo "GITHUB_TOKEN detected - configuring git for private repo access"
-    git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
-    git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+    # Method 1: URL rewrite for SSH-style URLs
+    git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+    # Method 2: Credential store for HTTPS URLs
+    echo "https://x-access-token:${GITHUB_TOKEN}@github.com" > ~/.git-credentials
+    git config --global credential.helper store
     echo "Git configured for authenticated GitHub access"
 fi
 
