@@ -350,32 +350,59 @@ export class WarmPoolManager {
    * @returns AggregatePoolMetrics
    */
   async getAggregateMetrics(): Promise<AggregatePoolMetrics> {
-    const metricsPromises = SUPPORTED_AGENTS.map((agent) => this.getMetrics(agent));
-    const byAgent = await Promise.all(metricsPromises);
+    // Return empty metrics if pool table is unavailable (e.g., table doesn't exist, IAM issues)
+    // This allows fleet status endpoint to work even without warm pool infrastructure
+    try {
+      const metricsPromises = SUPPORTED_AGENTS.map((agent) => this.getMetrics(agent));
+      const byAgent = await Promise.all(metricsPromises);
 
-    let totalTasks = 0;
-    let idleTasks = 0;
-    let inUseTasks = 0;
-    let terminatingTasks = 0;
+      let totalTasks = 0;
+      let idleTasks = 0;
+      let inUseTasks = 0;
+      let terminatingTasks = 0;
 
-    for (const agentType of SUPPORTED_AGENTS) {
-      const terminating = await this.poolRepository.countByAgent(agentType, 'terminating');
-      terminatingTasks += terminating;
+      for (const agentType of SUPPORTED_AGENTS) {
+        const terminating = await this.poolRepository.countByAgent(agentType, 'terminating');
+        terminatingTasks += terminating;
+      }
+
+      for (const metrics of byAgent) {
+        totalTasks += metrics.totalTasks;
+        idleTasks += metrics.idleTasks;
+        inUseTasks += metrics.inUseTasks;
+      }
+
+      return {
+        totalTasks,
+        idleTasks,
+        inUseTasks,
+        terminatingTasks,
+        byAgent,
+      };
+    } catch (error) {
+      // Log the error but return empty metrics to allow fleet status to function
+      this.logger.warn(
+        { error: error instanceof Error ? error.message : 'Unknown error' },
+        'Pool metrics unavailable, returning empty metrics'
+      );
+
+      // Return empty metrics for all agents
+      const emptyByAgent: PoolMetrics[] = SUPPORTED_AGENTS.map((agentType) => ({
+        agentType,
+        totalTasks: 0,
+        idleTasks: 0,
+        inUseTasks: 0,
+        averageWaitTime: 0,
+      }));
+
+      return {
+        totalTasks: 0,
+        idleTasks: 0,
+        inUseTasks: 0,
+        terminatingTasks: 0,
+        byAgent: emptyByAgent,
+      };
     }
-
-    for (const metrics of byAgent) {
-      totalTasks += metrics.totalTasks;
-      idleTasks += metrics.idleTasks;
-      inUseTasks += metrics.inUseTasks;
-    }
-
-    return {
-      totalTasks,
-      idleTasks,
-      inUseTasks,
-      terminatingTasks,
-      byAgent,
-    };
   }
 
   /**
