@@ -34,10 +34,10 @@ const createdDispatchIds: string[] = [];
 function getModelIdForAgent(agent: string): string {
   const modelIds: Record<string, string> = {
     claude: 'claude-opus-4-5-20251101',
-    codex: 'gpt-5.2-codex',
+    codex: 'gpt-5.1-codex-max',
     gemini: 'gemini-3-pro-preview',
     aider: 'deepseek/deepseek-coder',
-    grok: 'grok-4.1',
+    grok: 'grok-4-1-fast-reasoning',
   };
   return modelIds[agent] ?? 'unknown';
 }
@@ -92,10 +92,10 @@ describe('API Integration Tests', () => {
           },
           agents: [
             { agent: 'claude', available: true, modelId: 'claude-opus-4-5-20251101', poolSize: 0, active: 0, idle: 0, successRate: 100, avgDurationMs: 0, maxConcurrent: 5 },
-            { agent: 'codex', available: true, modelId: 'gpt-5.2-codex', poolSize: 0, active: 0, idle: 0, successRate: 100, avgDurationMs: 0, maxConcurrent: 5 },
+            { agent: 'codex', available: true, modelId: 'gpt-5.1-codex-max', poolSize: 0, active: 0, idle: 0, successRate: 100, avgDurationMs: 0, maxConcurrent: 5 },
             { agent: 'gemini', available: true, modelId: 'gemini-3-pro-preview', poolSize: 0, active: 0, idle: 0, successRate: 100, avgDurationMs: 0, maxConcurrent: 5 },
             { agent: 'aider', available: true, modelId: 'deepseek/deepseek-coder', poolSize: 0, active: 0, idle: 0, successRate: 100, avgDurationMs: 0, maxConcurrent: 3 },
-            { agent: 'grok', available: true, modelId: 'grok-4.1', poolSize: 0, active: 0, idle: 0, successRate: 100, avgDurationMs: 0, maxConcurrent: 5 },
+            { agent: 'grok', available: true, modelId: 'grok-4-1-fast-reasoning', poolSize: 0, active: 0, idle: 0, successRate: 100, avgDurationMs: 0, maxConcurrent: 5 },
           ],
           system: {
             cpuUsagePercent: 25,

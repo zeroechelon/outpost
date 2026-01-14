@@ -218,7 +218,7 @@ describe('CostCalculatorService', () => {
       expect(
         calculator.getModelTierMultiplier('claude-opus-4-5-20251101')
       ).toBe(1.0);
-      expect(calculator.getModelTierMultiplier('gpt-5.2-codex')).toBe(1.0);
+      expect(calculator.getModelTierMultiplier('gpt-5.1-codex-max')).toBe(1.0);
       expect(calculator.getModelTierMultiplier('gemini-3-pro-preview')).toBe(
         1.0
       );

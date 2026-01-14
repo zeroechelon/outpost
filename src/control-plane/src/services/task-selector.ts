@@ -43,11 +43,11 @@ const AGENT_MODEL_REGISTRY: Readonly<Record<AgentType, readonly ModelConfig[]>> 
     { modelId: 'claude-haiku-4-5-20250801', tier: 'fast' },
   ],
   codex: [
-    { modelId: 'gpt-5.2-codex', tier: 'flagship' },
+    { modelId: 'gpt-5.1-codex-max', tier: 'flagship' },
     { modelId: 'gpt-4o-codex', tier: 'balanced' },
   ],
   gemini: [
-    { modelId: 'gemini-3-pro-preview', tier: 'flagship' },
+    { modelId: 'gemini-3-flash-preview', tier: 'flagship' },
     { modelId: 'gemini-3-flash', tier: 'fast' },
   ],
   aider: [
@@ -55,8 +55,8 @@ const AGENT_MODEL_REGISTRY: Readonly<Record<AgentType, readonly ModelConfig[]>> 
     { modelId: 'deepseek/deepseek-chat', tier: 'balanced' },
   ],
   grok: [
-    { modelId: 'grok-4.1', tier: 'flagship' },
-    { modelId: 'grok-4.1-fast-reasoning', tier: 'fast' },
+    { modelId: 'grok-4-1-fast-reasoning', tier: 'flagship' },
+    { modelId: 'grok-4-fast-reasoning', tier: 'fast' },
   ],
 } as const;
 

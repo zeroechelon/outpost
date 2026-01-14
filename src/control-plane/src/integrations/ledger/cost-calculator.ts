@@ -127,11 +127,12 @@ const MODEL_TIER_MAP: Readonly<Record<string, ModelTier>> = {
   'claude-3-5-haiku-20241022': 'fast',
 
   // OpenAI Codex models
-  'gpt-5.2-codex': 'flagship',
+  'gpt-5.1-codex-max': 'flagship',
   'gpt-4.1-codex': 'balanced',
   'gpt-4o-mini': 'fast',
 
   // Gemini models
+  'gemini-3-flash-preview': 'flagship',
   'gemini-3-pro-preview': 'flagship',
   'gemini-2.5-pro': 'flagship',
   'gemini-2.0-flash': 'balanced',
@@ -143,7 +144,8 @@ const MODEL_TIER_MAP: Readonly<Record<string, ModelTier>> = {
   'deepseek-coder': 'fast',
 
   // xAI Grok models
-  'grok-4.1': 'flagship',
+  'grok-4-1-fast-reasoning': 'flagship',
+  'grok-4-fast-reasoning': 'fast',
   'grok-3': 'balanced',
   'grok-2': 'fast',
 } as const;

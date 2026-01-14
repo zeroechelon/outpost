@@ -29,19 +29,19 @@ fi
 # -----------------------------------------------------------------------------
 
 # Set default model if not provided
-export MODEL_ID="${MODEL_ID:-${GROK_DEFAULT_MODEL:-grok-4.1}}"
+export MODEL_ID="${MODEL_ID:-${GROK_DEFAULT_MODEL:-grok-4-1-fast-reasoning}}"
 
 # Validate model selection
 case "${MODEL_ID}" in
-    grok-4.1|grok-4.1-fast-reasoning)
+    grok-4-1-fast-reasoning|grok-4-fast-reasoning)
         echo "Model: ${MODEL_ID} (valid)"
         ;;
     grok-3|grok-3-mini|grok-2*)
         echo "Model: ${MODEL_ID} (legacy, may have reduced capabilities)"
         ;;
     *)
-        echo "WARNING: Unknown model '${MODEL_ID}', defaulting to grok-4.1"
-        export MODEL_ID="grok-4.1"
+        echo "WARNING: Unknown model '${MODEL_ID}', defaulting to grok-4-1-fast-reasoning"
+        export MODEL_ID="grok-4-1-fast-reasoning"
         ;;
 esac
 

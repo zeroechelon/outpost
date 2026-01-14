@@ -13,8 +13,8 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 AGENT_NAME="gemini"
 AGENT_VERSION="2.0.0"
-DEFAULT_MODEL="gemini-3-pro-preview"
-SUPPORTED_MODELS=("gemini-3-pro-preview" "gemini-3-flash")
+DEFAULT_MODEL="gemini-3-flash-preview"
+SUPPORTED_MODELS=("gemini-3-flash-preview" "gemini-3-pro-preview" "gemini-3-flash")
 
 # -----------------------------------------------------------------------------
 # Logging Functions

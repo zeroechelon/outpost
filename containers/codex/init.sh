@@ -50,19 +50,29 @@ fi
 
 log_info "OPENAI_API_KEY validated"
 
+# Register API key with Codex CLI (required for v0.80.0+)
+# Codex no longer implicitly uses OPENAI_API_KEY from environment
+# Must explicitly login with API key for headless/container execution
+log_info "Registering API key with Codex CLI..."
+if echo "${OPENAI_API_KEY}" | codex login --with-api-key 2>&1; then
+    log_success "API key registered with Codex CLI"
+else
+    log_warn "Could not register API key with Codex CLI (may already be registered)"
+fi
+
 # -----------------------------------------------------------------------------
 # Model Configuration
 # -----------------------------------------------------------------------------
 # Set default model if not provided
 if [ -z "${MODEL_ID}" ]; then
-    export MODEL_ID="${CODEX_DEFAULT_MODEL:-gpt-5.2-codex}"
+    export MODEL_ID="${CODEX_DEFAULT_MODEL:-gpt-5.1-codex-max}"
     log_info "MODEL_ID not set, using default: ${MODEL_ID}"
 else
     log_info "MODEL_ID configured: ${MODEL_ID}"
 fi
 
 # Validate model is in supported list
-SUPPORTED_MODELS="gpt-5.2-codex gpt-4o-codex"
+SUPPORTED_MODELS="gpt-5.1-codex-max gpt-4o-codex"
 if [[ ! " ${SUPPORTED_MODELS} " =~ " ${MODEL_ID} " ]]; then
     log_warn "MODEL_ID '${MODEL_ID}' not in standard list (${SUPPORTED_MODELS})"
     log_warn "Proceeding anyway - OpenAI may support additional models"
@@ -149,6 +159,7 @@ if [ -n "${TASK:-}" ]; then
     # Execute Codex with task in non-interactive mode
     # Using exec subcommand with bypass flags for autonomous execution
     exec codex exec \
+        --model "${MODEL_ID}" \
         --dangerously-bypass-approvals-and-sandbox \
         --skip-git-repo-check \
         "${TASK}"

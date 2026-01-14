@@ -42,14 +42,14 @@ export const AGENT_CONFIGS: Readonly<Record<AgentType, AgentConfig>> = {
   },
   codex: {
     type: 'codex',
-    modelId: 'gpt-5.2-codex',
+    modelId: 'gpt-5.1-codex-max',
     dispatchScript: 'dispatch-codex.sh',
     maxConcurrent: 5,
     timeoutSeconds: 3600,
   },
   gemini: {
     type: 'gemini',
-    modelId: 'gemini-3-pro-preview',
+    modelId: 'gemini-3-flash-preview',
     dispatchScript: 'dispatch-gemini.sh',
     maxConcurrent: 5,
     timeoutSeconds: 3600,
@@ -63,7 +63,7 @@ export const AGENT_CONFIGS: Readonly<Record<AgentType, AgentConfig>> = {
   },
   grok: {
     type: 'grok',
-    modelId: 'grok-4.1',
+    modelId: 'grok-4-1-fast-reasoning',
     dispatchScript: 'dispatch-grok.sh',
     maxConcurrent: 5,
     timeoutSeconds: 3600,

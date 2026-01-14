@@ -130,3 +130,28 @@ echo " Version:  $(aider --version 2>/dev/null | head -1 || echo 'unknown')"
 echo " Mode:     Autonomous (--yes-always)"
 echo "=============================================="
 echo ""
+
+# -----------------------------------------------------------------------------
+# Task Execution (if TASK env var is set)
+# -----------------------------------------------------------------------------
+# When running in ECS, the TASK environment variable contains the task
+# If TASK is set, execute Aider with the task and exit
+if [ -n "${TASK:-}" ]; then
+    echo "[AIDER] TASK environment variable detected (${#TASK} chars)"
+    echo "[AIDER] Executing task via Aider CLI..."
+
+    # Change to workspace directory
+    cd "${AIDER_GIT_ROOT:-/workspace}"
+
+    # Execute Aider with task in autonomous mode
+    # --message: send task, process reply, exit (disables chat mode)
+    # --yes-always: auto-confirm all prompts
+    # --auto-commits: auto-commit generated changes
+    # --no-check-update: skip version check for faster startup
+    exec aider \
+        --message "$TASK" \
+        --yes-always \
+        --auto-commits \
+        --no-check-update \
+        --no-stream
+fi
