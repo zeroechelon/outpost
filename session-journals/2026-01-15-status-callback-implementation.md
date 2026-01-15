@@ -316,4 +316,31 @@ docs/API.md (list_runs documentation)
 
 ---
 
-**Status:** Outpost v2 status callback fully operational. Fleet agents 100% functional. Zero zombie dispatches. Operational readiness blueprint complete (30/30 tasks).
+## Session 018 Checkpoint: Production Release
+
+**PR Merge:** https://github.com/zeroechelon/outpost/pull/2
+- Merged v2-commander-platform → main (squash merge)
+- Commit: 84e3c9b1
+- Changes: +94,968 lines / -130 lines / 296 files
+- All 4 blueprints (113 tasks) merged to main
+
+**Blueprint Deactivation:**
+- ACTIVE_BLUEPRINT.md converted from symlink to status file
+- All blueprints marked complete
+- Commit: 7453ef43
+
+**Repository Tagged:**
+- Tag: v2.0.1
+- Description: Operational Readiness Complete
+- Pushed to origin
+
+**Production Status:**
+- Main branch: 7453ef43
+- Fleet: 5/5 agents operational
+- Monitoring: Dashboard + alarms + custom metrics
+- Storage: TTL enabled, GSI active
+- API: list_runs implemented, documented
+
+---
+
+**Status:** Outpost v2 status callback fully operational. Fleet agents 100% functional. Zero zombie dispatches. Operational readiness blueprint complete (30/30 tasks). V2.0.1 tagged and deployed to main branch.
