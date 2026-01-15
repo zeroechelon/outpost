@@ -1,0 +1,1678 @@
+# Outpost Storage Lifecycle Governance — Blueprint Specification
+
+> **Document Status**: Deployed
+> **Last Updated**: 2026-01-15
+> **Deployed**: 2026-01-15
+> **Owner**: Zero Echelon LLC
+> **Blueprint ID**: outpost-storage-lifecycle-001
+
+<!-- BLUEPRINT METADATA (DO NOT REMOVE) -->
+<!-- _blueprint_version: 2.1.0 -->
+<!-- _generated_at: 2026-01-14T23:45:00Z -->
+<!-- _generator: claude-opus-4.5 (session-016) -->
+<!-- _depth: 3 -->
+<!-- END METADATA -->
+
+---
+
+## Strategic Vision
+
+Implement self-sustaining storage lifecycle management across all Outpost v2.0 infrastructure components. The system must automatically expire unused data at 30 days, archive before deletion, and require zero manual maintenance while preserving customer flexibility for persistent workspaces.
+
+**Key Objectives:**
+1. Eliminate unbounded storage growth across S3, ECR, EFS, and CloudWatch
+2. Implement 30-day default TTL for all ephemeral data
+3. Create activity-based TTL extension for persistent workspaces
+4. Deploy monitoring and alerting for storage anomalies
+5. Maintain GitOps compliance with Terraform-managed policies
+
+---
+
+## Success Metrics
+
+| Metric | Current | Target | Measurement |
+|--------|---------|--------|-------------|
+| S3 outputs size | 51 MB (unbounded) | < 100 MB steady state | CloudWatch BucketSizeBytes |
+| ECR orphaned images | 57 | 0 | `aws ecr list-images --filter tagStatus=UNTAGGED` |
+| EFS storage | 6 KB (dormant) | < 10 GB (with persistent mode) | CloudWatch StorageBytes |
+| Workspace TTL compliance | 0% | 100% | DynamoDB TTL scan |
+| Cleanup Lambda errors | N/A | 0 | CloudWatch Lambda Errors metric |
+| Container Insights retention | 1 day | 30 days | CloudWatch LogGroup retention |
+| Monthly storage cost | ~$2 (ECR orphans) | < $20 at scale | AWS Cost Explorer |
+
+---
+
+## Execution Configuration
+
+```yaml
+execution:
+  shell: bash
+  shell_flags: ["-e", "-o", "pipefail"]
+  max_parallel_tasks: 2
+
+  resource_locks:
+    - name: "terraform_state"
+      mode: exclusive
+    - name: "aws_ecr"
+      mode: shared
+      max_holders: 3
+
+  lock_arbitration:
+    default_timeout: PT5M
+    default_priority: 50
+    deadlock_detection: true
+    on_deadlock: abort
+
+  preflight_checks:
+    - command: "terraform --version"
+      expected_exit_code: 0
+      error_message: "Terraform is required"
+    - command: "aws sts get-caller-identity --profile soc"
+      expected_exit_code: 0
+      error_message: "AWS soc profile must be configured"
+    - command: "test -d infrastructure/terraform"
+      expected_exit_code: 0
+      error_message: "Terraform directory must exist"
+    - command: "jq --version"
+      expected_exit_code: 0
+      error_message: "jq is required for JSON processing"
+
+  secret_resolution:
+    on_missing: abort
+    sources:
+      - type: env
+        prefix: ""
+      - type: file
+        path: "~/.zeos/tokens"
+
+  observability:
+    metrics:
+      enabled: true
+      exporter: none
+    tracing:
+      enabled: false
+    logging:
+      format: text
+      level: info
+      destination: stdout
+
+  budget:
+    max_total_cost: 50.00
+    currency: USD
+    per_task_default: 5.00
+    on_total_exceeded: warn
+```
+
+---
+
+## Tier 0: Immediate ECR Cleanup (Manual)
+
+### T0.1: Audit ECR Repositories
+
+```yaml
+task_id: T0.1
+name: "Audit ECR repositories for orphaned images"
+status: not_started
+dependencies: []
+
+interface:
+  input: "AWS credentials with ECR read access"
+  output: "JSON report of all repositories with image counts and orphan counts"
+  input_type: none
+  output_type: json
+  output_schema:
+    type: object
+    properties:
+      repositories:
+        type: array
+        items:
+          type: object
+          properties:
+            name: { type: string }
+            total_images: { type: integer }
+            tagged_images: { type: integer }
+            untagged_images: { type: integer }
+            has_lifecycle: { type: boolean }
+
+input_bindings: {}
+
+output:
+  location: file
+  path: "/tmp/blueprint/T0.1/ecr-audit.json"
+  ports:
+    audit_report:
+      type: json
+
+required_capabilities:
+  - aws-cli>=2.0
+  - jq
+
+acceptance_criteria:
+  - "All 7 Outpost ECR repositories are audited"
+  - "Orphan count matches expected (55 in control-plane)"
+  - "Lifecycle policy status captured for each repository"
+
+verification:
+  smoke:
+    command: "aws ecr describe-repositories --profile soc --query 'repositories[?contains(repositoryName, `outpost`)]' | jq 'length == 7'"
+    timeout: PT30S
+  unit:
+    command: "test -f /tmp/blueprint/T0.1/ecr-audit.json && jq '.repositories | length' /tmp/blueprint/T0.1/ecr-audit.json | grep -q 7"
+    timeout: PT1M
+
+rollback: "rm -f /tmp/blueprint/T0.1/ecr-audit.json"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost"
+  timeout: PT5M
+
+on_failure:
+  max_retries: 2
+  retry_delay: PT10S
+  action: block
+
+idempotent: true
+
+assignee: null
+estimated_sessions: 1
+notes: "Read-only audit task, no infrastructure changes"
+```
+
+### T0.2: Delete Orphaned ECR Images
+
+```yaml
+task_id: T0.2
+name: "Delete 55 orphaned images from outpost-control-plane"
+status: not_started
+dependencies: [T0.1]
+
+interface:
+  input: "ECR audit report confirming orphan counts"
+  output: "Deletion confirmation with count of removed images"
+  input_type: json
+  output_type: json
+  output_schema:
+    type: object
+    properties:
+      repository: { type: string }
+      deleted_count: { type: integer }
+      failures: { type: array }
+
+input_bindings:
+  audit_report:
+    source: T0.1
+    output_port: audit_report
+    transfer: file
+    required: true
+
+output:
+  location: file
+  path: "/tmp/blueprint/T0.2/deletion-result.json"
+  ports:
+    deletion_result:
+      type: json
+
+required_capabilities:
+  - aws-cli>=2.0
+  - jq
+
+acceptance_criteria:
+  - "All untagged images in outpost-control-plane are deleted"
+  - "No tagged images (latest, v2.0.0) are affected"
+  - "Deletion count >= 50 images"
+
+verification:
+  smoke:
+    command: "aws ecr list-images --repository-name outpost-control-plane --filter tagStatus=UNTAGGED --profile soc --query 'imageIds | length(@)' | grep -q '^0$'"
+    timeout: PT30S
+  unit:
+    command: "test -f /tmp/blueprint/T0.2/deletion-result.json && jq '.deleted_count >= 50' /tmp/blueprint/T0.2/deletion-result.json | grep -q true"
+    timeout: PT1M
+
+rollback: "echo 'ECR image deletion is irreversible - no rollback available'"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost"
+  timeout: PT10M
+  environment_variables:
+    AWS_PROFILE: soc
+
+on_failure:
+  max_retries: 1
+  retry_delay: PT30S
+  action: block
+
+idempotent: true
+human_required:
+  description: "Confirm deletion of orphaned ECR images"
+  action_required: "approve"
+  timeout: PT1H
+
+assignee: null
+estimated_sessions: 1
+notes: "Destructive operation - deletes images permanently"
+```
+
+---
+
+## Tier 1: S3 Lifecycle Policies (Terraform)
+
+### T1.1: Create S3 Lifecycle Terraform Module
+
+```yaml
+task_id: T1.1
+name: "Create S3 lifecycle configuration Terraform module"
+status: not_started
+dependencies: []
+
+interface:
+  input: "S3 lifecycle requirements (30d IA, 90d Glacier, 180d expire)"
+  output: "Terraform module files for S3 lifecycle"
+  input_type: none
+  output_type: file_path
+
+input_bindings: {}
+
+output:
+  location: file
+  path: "infrastructure/terraform/modules/s3-lifecycle/main.tf"
+  ports:
+    module_path:
+      type: string
+
+required_capabilities:
+  - terraform>=1.5
+
+acceptance_criteria:
+  - "Module created at infrastructure/terraform/modules/s3-lifecycle/"
+  - "main.tf defines aws_s3_bucket_lifecycle_configuration resource"
+  - "variables.tf defines bucket_id, transitions, expiration inputs"
+  - "outputs.tf exports lifecycle_rule_id"
+
+verification:
+  smoke:
+    command: "test -f infrastructure/terraform/modules/s3-lifecycle/main.tf"
+    timeout: PT10S
+  unit:
+    command: "grep -q 'aws_s3_bucket_lifecycle_configuration' infrastructure/terraform/modules/s3-lifecycle/main.tf"
+    timeout: PT30S
+  integration:
+    command: "cd infrastructure/terraform/modules/s3-lifecycle && terraform validate"
+    timeout: PT2M
+
+rollback: "rm -rf infrastructure/terraform/modules/s3-lifecycle"
+
+files_to_create:
+  - "infrastructure/terraform/modules/s3-lifecycle/main.tf"
+  - "infrastructure/terraform/modules/s3-lifecycle/variables.tf"
+  - "infrastructure/terraform/modules/s3-lifecycle/outputs.tf"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost"
+  timeout: PT30M
+
+on_failure:
+  max_retries: 0
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+```
+
+### T1.2: Configure outpost-outputs Lifecycle
+
+```yaml
+task_id: T1.2
+name: "Apply lifecycle policy to outpost-outputs bucket"
+status: not_started
+dependencies: [T1.1]
+
+interface:
+  input: "S3 lifecycle module and bucket identifier"
+  output: "Terraform apply output confirming lifecycle creation"
+  input_type: none
+  output_type: json
+
+input_bindings:
+  module_path:
+    source: T1.1
+    output_port: module_path
+    transfer: file
+    required: true
+
+output:
+  location: file
+  path: "/tmp/blueprint/T1.2/terraform-apply.json"
+  ports:
+    apply_result:
+      type: json
+
+required_capabilities:
+  - terraform>=1.5
+  - aws-cli>=2.0
+
+acceptance_criteria:
+  - "Lifecycle rule 'output-lifecycle' created on outpost-outputs bucket"
+  - "30-day transition to STANDARD_IA configured"
+  - "90-day transition to GLACIER configured"
+  - "180-day expiration configured"
+  - "Noncurrent version expiration at 30 days"
+
+verification:
+  smoke:
+    command: "aws s3api get-bucket-lifecycle-configuration --bucket outpost-outputs --profile soc | jq '.Rules[0].Status' | grep -q 'Enabled'"
+    timeout: PT30S
+  unit:
+    command: "aws s3api get-bucket-lifecycle-configuration --bucket outpost-outputs --profile soc | jq '.Rules[0].Transitions | length >= 2'"
+    timeout: PT1M
+  integration:
+    command: "aws s3api get-bucket-lifecycle-configuration --bucket outpost-outputs --profile soc | jq '.Rules[0].Expiration.Days == 180'"
+    timeout: PT1M
+
+rollback: "aws s3api delete-bucket-lifecycle --bucket outpost-outputs --profile soc"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost/infrastructure/terraform/environments/dev"
+  timeout: PT15M
+  environment_variables:
+    AWS_PROFILE: soc
+    TF_VAR_environment: dev
+
+resources:
+  locks:
+    - name: "terraform_state"
+      mode: exclusive
+
+on_failure:
+  max_retries: 1
+  retry_delay: PT30S
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+```
+
+### T1.3: Configure terraform-state Version Expiration
+
+```yaml
+task_id: T1.3
+name: "Apply noncurrent version expiration to terraform-state bucket"
+status: not_started
+dependencies: [T1.1]
+
+interface:
+  input: "S3 lifecycle module and terraform-state bucket identifier"
+  output: "Terraform apply output confirming lifecycle creation"
+  input_type: none
+  output_type: json
+
+input_bindings:
+  module_path:
+    source: T1.1
+    output_port: module_path
+    transfer: file
+    required: true
+
+output:
+  location: file
+  path: "/tmp/blueprint/T1.3/terraform-apply.json"
+  ports:
+    apply_result:
+      type: json
+
+required_capabilities:
+  - terraform>=1.5
+  - aws-cli>=2.0
+
+acceptance_criteria:
+  - "Lifecycle rule 'state-version-cleanup' created on outpost-terraform-state bucket"
+  - "Noncurrent version expiration at 30 days"
+  - "Current version NOT affected (retained indefinitely)"
+
+verification:
+  smoke:
+    command: "aws s3api get-bucket-lifecycle-configuration --bucket outpost-terraform-state --profile soc | jq '.Rules[0].Status' | grep -q 'Enabled'"
+    timeout: PT30S
+  unit:
+    command: "aws s3api get-bucket-lifecycle-configuration --bucket outpost-terraform-state --profile soc | jq '.Rules[0].NoncurrentVersionExpiration.NoncurrentDays == 30'"
+    timeout: PT1M
+
+rollback: "aws s3api delete-bucket-lifecycle --bucket outpost-terraform-state --profile soc"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost/infrastructure/terraform/environments/dev"
+  timeout: PT15M
+  environment_variables:
+    AWS_PROFILE: soc
+
+resources:
+  locks:
+    - name: "terraform_state"
+      mode: exclusive
+
+on_failure:
+  max_retries: 1
+  retry_delay: PT30S
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+```
+
+### T1.4: Enable S3 Bucket Keys
+
+```yaml
+task_id: T1.4
+name: "Enable BucketKeyEnabled for cost optimization"
+status: not_started
+dependencies: [T1.2, T1.3]
+
+interface:
+  input: "List of buckets requiring bucket key optimization"
+  output: "Confirmation of bucket key enablement"
+  input_type: none
+  output_type: json
+
+input_bindings: {}
+
+output:
+  location: file
+  path: "/tmp/blueprint/T1.4/bucket-keys.json"
+  ports:
+    result:
+      type: json
+
+required_capabilities:
+  - aws-cli>=2.0
+
+acceptance_criteria:
+  - "BucketKeyEnabled = true on outpost-outputs"
+  - "BucketKeyEnabled = true on outpost-terraform-state"
+
+verification:
+  smoke:
+    command: "aws s3api get-bucket-encryption --bucket outpost-outputs --profile soc | jq '.ServerSideEncryptionConfiguration.Rules[0].BucketKeyEnabled' | grep -q true"
+    timeout: PT30S
+  unit:
+    command: "aws s3api get-bucket-encryption --bucket outpost-terraform-state --profile soc | jq '.ServerSideEncryptionConfiguration.Rules[0].BucketKeyEnabled' | grep -q true"
+    timeout: PT30S
+
+rollback: "echo 'Bucket key disablement requires Terraform modification'"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost/infrastructure/terraform/environments/dev"
+  timeout: PT10M
+  environment_variables:
+    AWS_PROFILE: soc
+
+on_failure:
+  max_retries: 1
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+```
+
+---
+
+## Tier 2: CloudWatch Log Retention (Terraform)
+
+### T2.1: Update Container Insights Retention
+
+```yaml
+task_id: T2.1
+name: "Set Container Insights log retention to 30 days"
+status: not_started
+dependencies: []
+
+interface:
+  input: "CloudWatch log group name and target retention"
+  output: "Confirmation of retention policy update"
+  input_type: none
+  output_type: json
+
+input_bindings: {}
+
+output:
+  location: file
+  path: "/tmp/blueprint/T2.1/retention-update.json"
+  ports:
+    result:
+      type: json
+
+required_capabilities:
+  - terraform>=1.5
+  - aws-cli>=2.0
+
+acceptance_criteria:
+  - "Log group /aws/ecs/containerinsights/outpost-dev/performance has 30-day retention"
+  - "Terraform state reflects the change"
+  - "No data loss during transition"
+
+verification:
+  smoke:
+    command: "aws logs describe-log-groups --log-group-name-prefix '/aws/ecs/containerinsights/outpost-dev' --profile soc | jq '.logGroups[0].retentionInDays' | grep -q 30"
+    timeout: PT30S
+  unit:
+    command: "aws logs describe-log-groups --log-group-name-prefix '/aws/ecs/containerinsights/outpost-dev' --profile soc | jq '.logGroups[0].retentionInDays == 30'"
+    timeout: PT1M
+
+rollback: "aws logs put-retention-policy --log-group-name '/aws/ecs/containerinsights/outpost-dev/performance' --retention-in-days 1 --profile soc"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost/infrastructure/terraform/environments/dev"
+  timeout: PT10M
+  environment_variables:
+    AWS_PROFILE: soc
+
+on_failure:
+  max_retries: 2
+  retry_delay: PT10S
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+notes: "Quick fix - can be applied via CLI or Terraform"
+```
+
+### T2.2: Audit All Log Group Retention
+
+```yaml
+task_id: T2.2
+name: "Verify all Outpost log groups have 30-day retention"
+status: not_started
+dependencies: [T2.1]
+
+interface:
+  input: "AWS credentials"
+  output: "Audit report of all log group retention settings"
+  input_type: none
+  output_type: json
+
+input_bindings: {}
+
+output:
+  location: file
+  path: "/tmp/blueprint/T2.2/log-audit.json"
+  ports:
+    audit_report:
+      type: json
+
+required_capabilities:
+  - aws-cli>=2.0
+  - jq
+
+acceptance_criteria:
+  - "All 9 Outpost log groups audited"
+  - "All log groups have retention <= 30 days"
+  - "No log groups with null (infinite) retention"
+
+verification:
+  smoke:
+    command: "aws logs describe-log-groups --profile soc | jq '[.logGroups[] | select(.logGroupName | contains(\"outpost\"))] | all(.retentionInDays != null)'"
+    timeout: PT1M
+  unit:
+    command: "aws logs describe-log-groups --profile soc | jq '[.logGroups[] | select(.logGroupName | contains(\"outpost\"))] | all(.retentionInDays <= 30)'"
+    timeout: PT1M
+
+rollback: "echo 'Audit is read-only, no rollback needed'"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost"
+  timeout: PT5M
+  environment_variables:
+    AWS_PROFILE: soc
+
+on_failure:
+  max_retries: 2
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+```
+
+---
+
+## Tier 3: ECR Lifecycle Policies (Terraform)
+
+### T3.1: Create ECR Lifecycle Terraform Module
+
+```yaml
+task_id: T3.1
+name: "Create ECR lifecycle policy Terraform module"
+status: not_started
+dependencies: [T0.2]
+
+interface:
+  input: "ECR lifecycle requirements (keep 10 tagged, delete untagged after 7 days)"
+  output: "Terraform module files for ECR lifecycle"
+  input_type: none
+  output_type: file_path
+
+input_bindings: {}
+
+output:
+  location: file
+  path: "infrastructure/terraform/modules/ecr-lifecycle/main.tf"
+  ports:
+    module_path:
+      type: string
+
+required_capabilities:
+  - terraform>=1.5
+
+acceptance_criteria:
+  - "Module created at infrastructure/terraform/modules/ecr-lifecycle/"
+  - "main.tf defines aws_ecr_lifecycle_policy resource"
+  - "Policy keeps last 10 tagged images"
+  - "Policy deletes untagged images after 7 days"
+
+verification:
+  smoke:
+    command: "test -f infrastructure/terraform/modules/ecr-lifecycle/main.tf"
+    timeout: PT10S
+  unit:
+    command: "grep -q 'aws_ecr_lifecycle_policy' infrastructure/terraform/modules/ecr-lifecycle/main.tf"
+    timeout: PT30S
+  integration:
+    command: "cd infrastructure/terraform/modules/ecr-lifecycle && terraform validate"
+    timeout: PT2M
+
+rollback: "rm -rf infrastructure/terraform/modules/ecr-lifecycle"
+
+files_to_create:
+  - "infrastructure/terraform/modules/ecr-lifecycle/main.tf"
+  - "infrastructure/terraform/modules/ecr-lifecycle/variables.tf"
+  - "infrastructure/terraform/modules/ecr-lifecycle/outputs.tf"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost"
+  timeout: PT30M
+
+on_failure:
+  max_retries: 0
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+```
+
+### T3.2: Apply Lifecycle to outpost-control-plane
+
+```yaml
+task_id: T3.2
+name: "Apply ECR lifecycle policy to outpost-control-plane"
+status: not_started
+dependencies: [T3.1]
+
+interface:
+  input: "ECR lifecycle module path"
+  output: "Terraform apply confirmation"
+  input_type: file_path
+  output_type: json
+
+input_bindings:
+  module_path:
+    source: T3.1
+    output_port: module_path
+    transfer: file
+    required: true
+
+output:
+  location: file
+  path: "/tmp/blueprint/T3.2/terraform-apply.json"
+  ports:
+    apply_result:
+      type: json
+
+required_capabilities:
+  - terraform>=1.5
+  - aws-cli>=2.0
+
+acceptance_criteria:
+  - "Lifecycle policy applied to outpost-control-plane repository"
+  - "Policy keeps last 10 tagged images"
+  - "Policy deletes untagged images after 7 days"
+
+verification:
+  smoke:
+    command: "aws ecr get-lifecycle-policy --repository-name outpost-control-plane --profile soc 2>/dev/null && echo 'Policy exists'"
+    timeout: PT30S
+  unit:
+    command: "aws ecr get-lifecycle-policy --repository-name outpost-control-plane --profile soc | jq '.lifecyclePolicyText | fromjson | .rules | length >= 2'"
+    timeout: PT1M
+
+rollback: "aws ecr delete-lifecycle-policy --repository-name outpost-control-plane --profile soc"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost/infrastructure/terraform/environments/dev"
+  timeout: PT15M
+  environment_variables:
+    AWS_PROFILE: soc
+
+resources:
+  locks:
+    - name: "aws_ecr"
+      mode: shared
+
+on_failure:
+  max_retries: 1
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+```
+
+### T3.3: Apply Lifecycle to outpost-base
+
+```yaml
+task_id: T3.3
+name: "Apply ECR lifecycle policy to outpost-base"
+status: not_started
+dependencies: [T3.1]
+
+interface:
+  input: "ECR lifecycle module path"
+  output: "Terraform apply confirmation"
+  input_type: file_path
+  output_type: json
+
+input_bindings:
+  module_path:
+    source: T3.1
+    output_port: module_path
+    transfer: file
+    required: true
+
+output:
+  location: file
+  path: "/tmp/blueprint/T3.3/terraform-apply.json"
+  ports:
+    apply_result:
+      type: json
+
+required_capabilities:
+  - terraform>=1.5
+  - aws-cli>=2.0
+
+acceptance_criteria:
+  - "Lifecycle policy applied to outpost-base repository"
+  - "Policy keeps last 10 tagged images"
+  - "Policy deletes untagged images after 7 days"
+
+verification:
+  smoke:
+    command: "aws ecr get-lifecycle-policy --repository-name outpost-base --profile soc 2>/dev/null && echo 'Policy exists'"
+    timeout: PT30S
+  unit:
+    command: "aws ecr get-lifecycle-policy --repository-name outpost-base --profile soc | jq '.lifecyclePolicyText | fromjson | .rules | length >= 2'"
+    timeout: PT1M
+
+rollback: "aws ecr delete-lifecycle-policy --repository-name outpost-base --profile soc"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost/infrastructure/terraform/environments/dev"
+  timeout: PT15M
+  environment_variables:
+    AWS_PROFILE: soc
+
+resources:
+  locks:
+    - name: "aws_ecr"
+      mode: shared
+
+on_failure:
+  max_retries: 1
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+```
+
+### T3.4: Verify All ECR Lifecycle Policies
+
+```yaml
+task_id: T3.4
+name: "Verify all 7 ECR repositories have lifecycle policies"
+status: not_started
+dependencies: [T3.2, T3.3]
+
+interface:
+  input: "AWS credentials"
+  output: "Audit report of ECR lifecycle policies"
+  input_type: none
+  output_type: json
+
+input_bindings: {}
+
+output:
+  location: file
+  path: "/tmp/blueprint/T3.4/ecr-lifecycle-audit.json"
+  ports:
+    audit_report:
+      type: json
+
+required_capabilities:
+  - aws-cli>=2.0
+  - jq
+
+acceptance_criteria:
+  - "All 7 Outpost ECR repositories have lifecycle policies"
+  - "No repository without lifecycle policy"
+
+verification:
+  smoke:
+    command: |
+      for repo in outpost-claude outpost-codex outpost-gemini outpost-aider outpost-grok outpost-base outpost-control-plane; do
+        aws ecr get-lifecycle-policy --repository-name $repo --profile soc >/dev/null 2>&1 || exit 1
+      done
+    timeout: PT2M
+  unit:
+    command: "test -f /tmp/blueprint/T3.4/ecr-lifecycle-audit.json && jq '.all_have_lifecycle' /tmp/blueprint/T3.4/ecr-lifecycle-audit.json | grep -q true"
+    timeout: PT1M
+
+rollback: "echo 'Audit is read-only, no rollback needed'"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost"
+  timeout: PT5M
+  environment_variables:
+    AWS_PROFILE: soc
+
+on_failure:
+  max_retries: 2
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+```
+
+---
+
+## Tier 4: EFS Workspace Cleanup System (New Infrastructure)
+
+### T4.1: Enable DynamoDB TTL on Workspaces Table
+
+```yaml
+task_id: T4.1
+name: "Enable DynamoDB TTL attribute on workspaces table"
+status: not_started
+dependencies: []
+
+interface:
+  input: "DynamoDB table name and TTL attribute specification"
+  output: "Terraform apply confirmation"
+  input_type: none
+  output_type: json
+
+input_bindings: {}
+
+output:
+  location: file
+  path: "/tmp/blueprint/T4.1/dynamodb-ttl.json"
+  ports:
+    result:
+      type: json
+
+required_capabilities:
+  - terraform>=1.5
+  - aws-cli>=2.0
+
+acceptance_criteria:
+  - "TTL enabled on workspaces table with attribute 'expires_at'"
+  - "Terraform state updated"
+  - "TTL deletions will trigger DynamoDB Streams"
+
+verification:
+  smoke:
+    command: "aws dynamodb describe-time-to-live --table-name outpost-workspaces --profile soc | jq '.TimeToLiveDescription.TimeToLiveStatus' | grep -q 'ENABLED'"
+    timeout: PT30S
+  unit:
+    command: "aws dynamodb describe-time-to-live --table-name outpost-workspaces --profile soc | jq '.TimeToLiveDescription.AttributeName' | grep -q 'expires_at'"
+    timeout: PT30S
+
+rollback: "aws dynamodb update-time-to-live --table-name outpost-workspaces --time-to-live-specification Enabled=false,AttributeName=expires_at --profile soc"
+
+files_to_modify:
+  - "infrastructure/terraform/modules/dynamodb/main.tf"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost/infrastructure/terraform/environments/dev"
+  timeout: PT15M
+  environment_variables:
+    AWS_PROFILE: soc
+
+on_failure:
+  max_retries: 1
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+```
+
+### T4.2: Create Workspace Cleanup Lambda
+
+```yaml
+task_id: T4.2
+name: "Create Lambda function for workspace cleanup"
+status: not_started
+dependencies: [T4.1]
+
+interface:
+  input: "Lambda handler specification and IAM role"
+  output: "Lambda function ARN and deployment confirmation"
+  input_type: none
+  output_type: json
+
+input_bindings:
+  ttl_result:
+    source: T4.1
+    output_port: result
+    transfer: file
+    required: true
+
+output:
+  location: file
+  path: "/tmp/blueprint/T4.2/lambda-deploy.json"
+  ports:
+    lambda_arn:
+      type: string
+    function_name:
+      type: string
+
+required_capabilities:
+  - terraform>=1.5
+  - nodejs>=18
+  - aws-cli>=2.0
+
+acceptance_criteria:
+  - "Lambda function outpost-workspace-cleanup created"
+  - "IAM role with EFS, DynamoDB, and CloudWatch permissions"
+  - "Handler processes DynamoDB Stream events"
+  - "Deletes EFS access points on TTL expiry"
+
+verification:
+  smoke:
+    command: "aws lambda get-function --function-name outpost-workspace-cleanup --profile soc | jq '.Configuration.FunctionName' | grep -q 'outpost-workspace-cleanup'"
+    timeout: PT30S
+  unit:
+    command: "aws lambda get-function --function-name outpost-workspace-cleanup --profile soc | jq '.Configuration.Runtime' | grep -q 'nodejs'"
+    timeout: PT30S
+  integration:
+    command: "aws lambda invoke --function-name outpost-workspace-cleanup --payload '{}' --profile soc /tmp/lambda-test.json && cat /tmp/lambda-test.json"
+    timeout: PT2M
+
+rollback: "aws lambda delete-function --function-name outpost-workspace-cleanup --profile soc"
+
+files_to_create:
+  - "infrastructure/lambda/workspace-cleanup/handler.ts"
+  - "infrastructure/lambda/workspace-cleanup/package.json"
+  - "infrastructure/terraform/modules/lambda-cleanup/main.tf"
+  - "infrastructure/terraform/modules/lambda-cleanup/variables.tf"
+  - "infrastructure/terraform/modules/lambda-cleanup/outputs.tf"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost"
+  timeout: PT45M
+
+on_failure:
+  max_retries: 1
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 2
+```
+
+### T4.3: Configure DynamoDB Streams Trigger
+
+```yaml
+task_id: T4.3
+name: "Connect DynamoDB Streams to cleanup Lambda"
+status: not_started
+dependencies: [T4.2]
+
+interface:
+  input: "Lambda ARN and DynamoDB Stream ARN"
+  output: "Event source mapping confirmation"
+  input_type: json
+  output_type: json
+
+input_bindings:
+  lambda_arn:
+    source: T4.2
+    output_port: lambda_arn
+    transfer: stdout
+    required: true
+
+output:
+  location: file
+  path: "/tmp/blueprint/T4.3/stream-trigger.json"
+  ports:
+    event_source_mapping:
+      type: json
+
+required_capabilities:
+  - terraform>=1.5
+  - aws-cli>=2.0
+
+acceptance_criteria:
+  - "Event source mapping created between DynamoDB Streams and Lambda"
+  - "Lambda triggered on REMOVE events (TTL deletions)"
+  - "Batch size and starting position configured"
+
+verification:
+  smoke:
+    command: "aws lambda list-event-source-mappings --function-name outpost-workspace-cleanup --profile soc | jq '.EventSourceMappings | length > 0'"
+    timeout: PT30S
+  unit:
+    command: "aws lambda list-event-source-mappings --function-name outpost-workspace-cleanup --profile soc | jq '.EventSourceMappings[0].State' | grep -q 'Enabled'"
+    timeout: PT30S
+
+rollback: |
+  UUID=$(aws lambda list-event-source-mappings --function-name outpost-workspace-cleanup --profile soc | jq -r '.EventSourceMappings[0].UUID')
+  aws lambda delete-event-source-mapping --uuid $UUID --profile soc
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost/infrastructure/terraform/environments/dev"
+  timeout: PT15M
+  environment_variables:
+    AWS_PROFILE: soc
+
+on_failure:
+  max_retries: 1
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+```
+
+### T4.4: Create Orphan Cleanup EventBridge Rule
+
+```yaml
+task_id: T4.4
+name: "Create weekly EFS orphan cleanup scheduled job"
+status: not_started
+dependencies: [T4.2]
+
+interface:
+  input: "Lambda ARN and schedule expression"
+  output: "EventBridge rule and target confirmation"
+  input_type: json
+  output_type: json
+
+input_bindings:
+  function_name:
+    source: T4.2
+    output_port: function_name
+    transfer: stdout
+    required: true
+
+output:
+  location: file
+  path: "/tmp/blueprint/T4.4/eventbridge-rule.json"
+  ports:
+    rule_arn:
+      type: string
+
+required_capabilities:
+  - terraform>=1.5
+  - aws-cli>=2.0
+
+acceptance_criteria:
+  - "EventBridge rule 'outpost-efs-orphan-cleanup' created"
+  - "Schedule: Every Sunday at 4 AM UTC"
+  - "Target: outpost-workspace-cleanup Lambda with orphan scan payload"
+
+verification:
+  smoke:
+    command: "aws events describe-rule --name outpost-efs-orphan-cleanup --profile soc | jq '.State' | grep -q 'ENABLED'"
+    timeout: PT30S
+  unit:
+    command: "aws events describe-rule --name outpost-efs-orphan-cleanup --profile soc | jq '.ScheduleExpression' | grep -q 'cron'"
+    timeout: PT30S
+
+rollback: "aws events delete-rule --name outpost-efs-orphan-cleanup --profile soc"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost/infrastructure/terraform/environments/dev"
+  timeout: PT15M
+  environment_variables:
+    AWS_PROFILE: soc
+
+on_failure:
+  max_retries: 1
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+```
+
+### T4.5: Update Workspace Service for TTL Management
+
+```yaml
+task_id: T4.5
+name: "Update workspace service to set and extend TTL"
+status: not_started
+dependencies: [T4.1]
+
+interface:
+  input: "Workspace service source code"
+  output: "Updated service with TTL management"
+  input_type: file_path
+  output_type: file_path
+
+input_bindings: {}
+
+output:
+  location: file
+  path: "src/control-plane/src/services/persistent-workspace.ts"
+  ports:
+    service_path:
+      type: string
+
+required_capabilities:
+  - typescript
+  - nodejs>=18
+
+acceptance_criteria:
+  - "createWorkspace() sets expiresAt to now + 30 days"
+  - "touchWorkspace() updates expiresAt on activity"
+  - "Dispatch handler calls touchWorkspace() for persistent mode"
+  - "Unit tests pass"
+
+verification:
+  smoke:
+    command: "grep -q 'expiresAt' src/control-plane/src/services/persistent-workspace.ts"
+    timeout: PT10S
+  unit:
+    command: "cd src/control-plane && npm test -- --grep 'workspace TTL'"
+    timeout: PT5M
+  integration:
+    command: "cd src/control-plane && npm run build"
+    timeout: PT3M
+
+rollback: "git checkout src/control-plane/src/services/persistent-workspace.ts"
+
+files_to_modify:
+  - "src/control-plane/src/services/persistent-workspace.ts"
+  - "src/control-plane/src/services/dispatcher.ts"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost"
+  timeout: PT1H
+
+on_failure:
+  max_retries: 0
+  action: block
+
+idempotent: false
+
+handoff:
+  checkpoint_format: json
+  checkpoint_path: "/tmp/blueprint/T4.5/checkpoint.json"
+  checkpoint_interval: PT10M
+  resume_strategy: from_checkpoint
+
+assignee: null
+estimated_sessions: 2
+```
+
+---
+
+## Tier 5: Monitoring and Alerting (Terraform)
+
+### T5.1: Create S3 Storage Growth Alarm
+
+```yaml
+task_id: T5.1
+name: "Create CloudWatch alarm for S3 outputs growth"
+status: not_started
+dependencies: [T1.2]
+
+interface:
+  input: "S3 bucket name and threshold"
+  output: "CloudWatch alarm ARN"
+  input_type: none
+  output_type: json
+
+input_bindings: {}
+
+output:
+  location: file
+  path: "/tmp/blueprint/T5.1/s3-alarm.json"
+  ports:
+    alarm_arn:
+      type: string
+
+required_capabilities:
+  - terraform>=1.5
+  - aws-cli>=2.0
+
+acceptance_criteria:
+  - "Alarm 'outpost-s3-outputs-growth' created"
+  - "Triggers when bucket exceeds 1 GB"
+  - "Connected to SNS topic for notifications"
+
+verification:
+  smoke:
+    command: "aws cloudwatch describe-alarms --alarm-names outpost-s3-outputs-growth --profile soc | jq '.MetricAlarms | length > 0'"
+    timeout: PT30S
+  unit:
+    command: "aws cloudwatch describe-alarms --alarm-names outpost-s3-outputs-growth --profile soc | jq '.MetricAlarms[0].Threshold' | grep -q '1073741824'"
+    timeout: PT30S
+
+rollback: "aws cloudwatch delete-alarms --alarm-names outpost-s3-outputs-growth --profile soc"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost/infrastructure/terraform/environments/dev"
+  timeout: PT15M
+  environment_variables:
+    AWS_PROFILE: soc
+
+on_failure:
+  max_retries: 1
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+```
+
+### T5.2: Create EFS Storage Growth Alarm
+
+```yaml
+task_id: T5.2
+name: "Create CloudWatch alarm for EFS workspaces growth"
+status: not_started
+dependencies: [T4.4]
+
+interface:
+  input: "EFS filesystem ID and threshold"
+  output: "CloudWatch alarm ARN"
+  input_type: none
+  output_type: json
+
+input_bindings: {}
+
+output:
+  location: file
+  path: "/tmp/blueprint/T5.2/efs-alarm.json"
+  ports:
+    alarm_arn:
+      type: string
+
+required_capabilities:
+  - terraform>=1.5
+  - aws-cli>=2.0
+
+acceptance_criteria:
+  - "Alarm 'outpost-efs-workspaces-growth' created"
+  - "Triggers when EFS exceeds 10 GB"
+  - "Connected to SNS topic for notifications"
+
+verification:
+  smoke:
+    command: "aws cloudwatch describe-alarms --alarm-names outpost-efs-workspaces-growth --profile soc | jq '.MetricAlarms | length > 0'"
+    timeout: PT30S
+  unit:
+    command: "aws cloudwatch describe-alarms --alarm-names outpost-efs-workspaces-growth --profile soc | jq '.MetricAlarms[0].Threshold' | grep -q '10737418240'"
+    timeout: PT30S
+
+rollback: "aws cloudwatch delete-alarms --alarm-names outpost-efs-workspaces-growth --profile soc"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost/infrastructure/terraform/environments/dev"
+  timeout: PT15M
+  environment_variables:
+    AWS_PROFILE: soc
+
+on_failure:
+  max_retries: 1
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+```
+
+### T5.3: Create Lambda Error Alarm
+
+```yaml
+task_id: T5.3
+name: "Create CloudWatch alarm for cleanup Lambda errors"
+status: not_started
+dependencies: [T4.2]
+
+interface:
+  input: "Lambda function name"
+  output: "CloudWatch alarm ARN"
+  input_type: none
+  output_type: json
+
+input_bindings:
+  function_name:
+    source: T4.2
+    output_port: function_name
+    transfer: stdout
+    required: true
+
+output:
+  location: file
+  path: "/tmp/blueprint/T5.3/lambda-alarm.json"
+  ports:
+    alarm_arn:
+      type: string
+
+required_capabilities:
+  - terraform>=1.5
+  - aws-cli>=2.0
+
+acceptance_criteria:
+  - "Alarm 'outpost-workspace-cleanup-errors' created"
+  - "Triggers on any Lambda error"
+  - "Connected to SNS topic for notifications"
+
+verification:
+  smoke:
+    command: "aws cloudwatch describe-alarms --alarm-names outpost-workspace-cleanup-errors --profile soc | jq '.MetricAlarms | length > 0'"
+    timeout: PT30S
+  unit:
+    command: "aws cloudwatch describe-alarms --alarm-names outpost-workspace-cleanup-errors --profile soc | jq '.MetricAlarms[0].Threshold' | grep -q '0'"
+    timeout: PT30S
+
+rollback: "aws cloudwatch delete-alarms --alarm-names outpost-workspace-cleanup-errors --profile soc"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost/infrastructure/terraform/environments/dev"
+  timeout: PT15M
+  environment_variables:
+    AWS_PROFILE: soc
+
+on_failure:
+  max_retries: 1
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+```
+
+### T5.4: Create SNS Notification Topic
+
+```yaml
+task_id: T5.4
+name: "Create SNS topic for storage alerts"
+status: not_started
+dependencies: []
+
+interface:
+  input: "SNS topic configuration"
+  output: "SNS topic ARN"
+  input_type: none
+  output_type: json
+
+input_bindings: {}
+
+output:
+  location: file
+  path: "/tmp/blueprint/T5.4/sns-topic.json"
+  ports:
+    topic_arn:
+      type: string
+
+required_capabilities:
+  - terraform>=1.5
+  - aws-cli>=2.0
+
+acceptance_criteria:
+  - "SNS topic 'outpost-storage-alerts' created"
+  - "Email subscription configured (optional)"
+  - "IAM policy allows CloudWatch to publish"
+
+verification:
+  smoke:
+    command: "aws sns list-topics --profile soc | jq '.Topics[].TopicArn' | grep -q 'outpost-storage-alerts'"
+    timeout: PT30S
+  unit:
+    command: "aws sns get-topic-attributes --topic-arn $(aws sns list-topics --profile soc | jq -r '.Topics[].TopicArn | select(contains(\"outpost-storage-alerts\"))') --profile soc | jq '.Attributes.TopicArn'"
+    timeout: PT1M
+
+rollback: |
+  TOPIC_ARN=$(aws sns list-topics --profile soc | jq -r '.Topics[].TopicArn | select(contains("outpost-storage-alerts"))')
+  aws sns delete-topic --topic-arn $TOPIC_ARN --profile soc
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost/infrastructure/terraform/environments/dev"
+  timeout: PT10M
+  environment_variables:
+    AWS_PROFILE: soc
+
+on_failure:
+  max_retries: 1
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+```
+
+### T5.5: Wire Alarms to SNS Topic
+
+```yaml
+task_id: T5.5
+name: "Connect all storage alarms to SNS notification topic"
+status: not_started
+dependencies: [T5.1, T5.2, T5.3, T5.4]
+
+interface:
+  input: "Alarm ARNs and SNS topic ARN"
+  output: "Confirmation of alarm actions configuration"
+  input_type: json
+  output_type: json
+
+input_bindings:
+  topic_arn:
+    source: T5.4
+    output_port: topic_arn
+    transfer: stdout
+    required: true
+  s3_alarm:
+    source: T5.1
+    output_port: alarm_arn
+    transfer: stdout
+    required: true
+  efs_alarm:
+    source: T5.2
+    output_port: alarm_arn
+    transfer: stdout
+    required: true
+  lambda_alarm:
+    source: T5.3
+    output_port: alarm_arn
+    transfer: stdout
+    required: true
+
+output:
+  location: file
+  path: "/tmp/blueprint/T5.5/alarm-wiring.json"
+  ports:
+    result:
+      type: json
+
+required_capabilities:
+  - terraform>=1.5
+  - aws-cli>=2.0
+
+acceptance_criteria:
+  - "All 3 storage alarms have SNS topic as alarm action"
+  - "Notifications will be sent on alarm state change"
+
+verification:
+  smoke:
+    command: "aws cloudwatch describe-alarms --alarm-names outpost-s3-outputs-growth outpost-efs-workspaces-growth outpost-workspace-cleanup-errors --profile soc | jq '.MetricAlarms | all(.AlarmActions | length > 0)'"
+    timeout: PT1M
+  unit:
+    command: "aws cloudwatch describe-alarms --alarm-names outpost-s3-outputs-growth --profile soc | jq '.MetricAlarms[0].AlarmActions[0]' | grep -q 'outpost-storage-alerts'"
+    timeout: PT30S
+
+rollback: "echo 'Alarm action removal requires Terraform modification'"
+
+execution_context:
+  working_directory: "/home/richie/projects/outpost/infrastructure/terraform/environments/dev"
+  timeout: PT15M
+  environment_variables:
+    AWS_PROFILE: soc
+
+on_failure:
+  max_retries: 1
+  action: block
+
+idempotent: true
+assignee: null
+estimated_sessions: 1
+```
+
+---
+
+## Dependency Graph
+
+```yaml
+dependencies:
+  # Tier 0: Immediate ECR Cleanup
+  T0.2:
+    depends_on: [T0.1]
+    input_bindings:
+      audit_report: T0.1.output.audit_report
+
+  # Tier 1: S3 Lifecycle
+  T1.2:
+    depends_on: [T1.1]
+    input_bindings:
+      module_path: T1.1.output.module_path
+  T1.3:
+    depends_on: [T1.1]
+    input_bindings:
+      module_path: T1.1.output.module_path
+  T1.4:
+    depends_on: [T1.2, T1.3]
+
+  # Tier 2: CloudWatch
+  T2.2:
+    depends_on: [T2.1]
+
+  # Tier 3: ECR Lifecycle
+  T3.1:
+    depends_on: [T0.2]  # Wait for orphan cleanup before applying lifecycle
+  T3.2:
+    depends_on: [T3.1]
+    input_bindings:
+      module_path: T3.1.output.module_path
+  T3.3:
+    depends_on: [T3.1]
+    input_bindings:
+      module_path: T3.1.output.module_path
+  T3.4:
+    depends_on: [T3.2, T3.3]
+
+  # Tier 4: EFS Cleanup System
+  T4.2:
+    depends_on: [T4.1]
+    input_bindings:
+      ttl_result: T4.1.output.result
+  T4.3:
+    depends_on: [T4.2]
+    input_bindings:
+      lambda_arn: T4.2.output.lambda_arn
+  T4.4:
+    depends_on: [T4.2]
+    input_bindings:
+      function_name: T4.2.output.function_name
+  T4.5:
+    depends_on: [T4.1]
+
+  # Tier 5: Monitoring
+  T5.1:
+    depends_on: [T1.2]
+  T5.2:
+    depends_on: [T4.4]
+  T5.3:
+    depends_on: [T4.2]
+    input_bindings:
+      function_name: T4.2.output.function_name
+  T5.5:
+    depends_on: [T5.1, T5.2, T5.3, T5.4]
+    input_bindings:
+      topic_arn: T5.4.output.topic_arn
+      s3_alarm: T5.1.output.alarm_arn
+      efs_alarm: T5.2.output.alarm_arn
+      lambda_alarm: T5.3.output.alarm_arn
+
+# Parallel execution groups
+parallel_groups:
+  - tasks: [T0.1]           # Start
+  - tasks: [T1.1, T2.1, T4.1, T5.4]  # Independent initiators
+  - tasks: [T1.2, T1.3, T2.2, T4.5]  # First wave dependents
+  - tasks: [T1.4, T3.1, T4.2]        # Second wave
+  - tasks: [T3.2, T3.3, T4.3, T4.4]  # Third wave
+  - tasks: [T3.4, T5.1, T5.2, T5.3]  # Verification/monitoring
+  - tasks: [T5.5]                     # Final wiring
+```
+
+---
+
+## Document Control
+
+| Version | Date | Author | Changes |
+|---------|------|--------|---------|
+| 1.0.0 | 2026-01-14 | Claude Opus 4.5 (Session 016) | Initial Blueprint generation |
+
+---
+
+## Appendix A: Task Summary
+
+| Task ID | Name | Tier | Status | Dependencies |
+|---------|------|------|--------|--------------|
+| T0.1 | Audit ECR repositories | 0 | not_started | — |
+| T0.2 | Delete orphaned ECR images | 0 | not_started | T0.1 |
+| T1.1 | Create S3 lifecycle module | 1 | not_started | — |
+| T1.2 | Configure outpost-outputs lifecycle | 1 | not_started | T1.1 |
+| T1.3 | Configure terraform-state lifecycle | 1 | not_started | T1.1 |
+| T1.4 | Enable S3 bucket keys | 1 | not_started | T1.2, T1.3 |
+| T2.1 | Update Container Insights retention | 2 | not_started | — |
+| T2.2 | Audit all log group retention | 2 | not_started | T2.1 |
+| T3.1 | Create ECR lifecycle module | 3 | not_started | T0.2 |
+| T3.2 | Apply lifecycle to control-plane | 3 | not_started | T3.1 |
+| T3.3 | Apply lifecycle to base | 3 | not_started | T3.1 |
+| T3.4 | Verify all ECR lifecycles | 3 | not_started | T3.2, T3.3 |
+| T4.1 | Enable DynamoDB TTL | 4 | not_started | — |
+| T4.2 | Create cleanup Lambda | 4 | not_started | T4.1 |
+| T4.3 | Configure DynamoDB Streams trigger | 4 | not_started | T4.2 |
+| T4.4 | Create orphan cleanup EventBridge | 4 | not_started | T4.2 |
+| T4.5 | Update workspace service for TTL | 4 | not_started | T4.1 |
+| T5.1 | Create S3 storage alarm | 5 | not_started | T1.2 |
+| T5.2 | Create EFS storage alarm | 5 | not_started | T4.4 |
+| T5.3 | Create Lambda error alarm | 5 | not_started | T4.2 |
+| T5.4 | Create SNS notification topic | 5 | not_started | — |
+| T5.5 | Wire alarms to SNS | 5 | not_started | T5.1-T5.4 |
+
+**Total Tasks:** 22
+**Estimated Sessions:** 18-22
+
+---
+
+*Blueprint Standard Format v2.1.0 — Generated by Claude Opus 4.5*
+*Outpost Storage Lifecycle Governance Blueprint v1.0.0*

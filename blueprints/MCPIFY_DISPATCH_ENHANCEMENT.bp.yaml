@@ -1,0 +1,2583 @@
+# =============================================================================
+# MCPIFY DISPATCH ENHANCEMENT BLUEPRINT
+# Blueprint Standard Format (BSF) v2.1.0
+# =============================================================================
+# Generated: 2026-01-15
+# Depth: 5 (Enterprise - Maximum Granularity)
+# Author: Claude Opus 4.5 (Session 3829e4fc)
+# Purpose: Expose full Outpost dispatch capabilities through MCPify MCP server
+# =============================================================================
+
+metadata:
+  blueprint_id: MCPIFY_DISPATCH_ENHANCEMENT
+  version: "1.0.0"
+  bsf_version: "2.1.0"
+  depth: 5
+  created: "2026-01-15T00:00:00Z"
+  author: "Claude Opus 4.5"
+  status: deployed
+
+  tags:
+    - mcpify
+    - outpost
+    - mcp
+    - dispatch
+    - api-enhancement
+
+  description: |
+    Enhance MCPify MCP server dispatch tool to expose full Outpost control plane
+    capabilities. Currently MCPify exposes 6 parameters while Outpost supports 12+.
+    This blueprint implements complete parameter parity with enterprise-grade
+    validation, documentation, and testing.
+
+# =============================================================================
+# PROBLEM STATEMENT
+# =============================================================================
+
+problem_statement:
+  summary: |
+    MCPify dispatch tool severely under-utilizes Outpost control plane capabilities.
+    Critical features like model selection, workspace control, and credential
+    injection are NOT exposed despite being fully implemented in Outpost.
+
+  current_state:
+    mcpify_parameters:
+      - agent        # Required - enum of 5 agents
+      - task         # Required - 10-5000 chars
+      - repo         # Optional - owner/repo format
+      - branch       # Optional - max 255 chars
+      - context      # Optional - minimal/standard/full
+      - timeoutSeconds  # Optional - 1-3600s
+
+    outpost_parameters:
+      - agent        # Required
+      - task         # Required - up to 50000 chars
+      - repo         # Optional
+      - branch       # Optional
+      - context      # Optional
+      - timeoutSeconds  # Optional - 30-86400s (24 hours)
+      - modelId      # Optional - specific model override
+      - workspaceMode  # Optional - full/minimal/none
+      - additionalSecrets  # Optional - key-value pairs
+      - idempotencyKey  # Optional - dedupe requests
+      - tags         # Optional - metadata tags
+      - constraints  # Optional - resource constraints
+
+  gaps_identified:
+    - modelId: "Model selection NOT EXPOSED (claude-opus, claude-sonnet, claude-haiku, etc.)"
+    - workspaceMode: "Workspace control NOT EXPOSED (skip clone capability)"
+    - additionalSecrets: "Custom secrets injection NOT EXPOSED"
+    - idempotencyKey: "Request deduplication NOT EXPOSED"
+    - tags: "Metadata tagging NOT EXPOSED"
+    - constraints: "Resource constraints NOT EXPOSED"
+    - timeoutSeconds: "Artificially limited to 3600s vs 86400s"
+    - task: "Artificially limited to 5000 chars vs 50000 chars"
+
+  impact:
+    - Cannot select specific models (forced to use defaults)
+    - Cannot skip repo cloning for simple tasks
+    - Cannot inject custom credentials/secrets
+    - Cannot deduplicate requests
+    - Cannot tag runs for filtering
+    - Cannot set extended timeouts for long-running tasks
+    - Cannot send large task descriptions
+
+# =============================================================================
+# EXECUTION CONFIGURATION
+# =============================================================================
+
+execution:
+  mode: sequential_tiers
+  parallelism:
+    max_concurrent_tasks: 4
+    tier_strategy: parallel_within_tier
+
+  retry_policy:
+    max_retries: 2
+    backoff_strategy: exponential
+    initial_delay_ms: 1000
+
+  timeout:
+    task_default_seconds: 300
+    tier_max_seconds: 1800
+    blueprint_max_seconds: 14400
+
+  validation:
+    require_tests: true
+    require_rollback: true
+    fail_fast: true
+
+# =============================================================================
+# TIER 0: SCHEMA FOUNDATION
+# Establish Zod schema updates with extended constraints
+# =============================================================================
+
+tiers:
+  - tier_id: T0
+    name: "Schema Foundation"
+    description: "Update MCPify Zod schemas to support extended parameters and constraints"
+    parallel: true
+
+    tasks:
+      # -------------------------------------------------------------------------
+      # T0.1: Extend Task Length Constraint
+      # -------------------------------------------------------------------------
+      - task_id: T0.1
+        name: "Extend task length constraint"
+        status: pending
+        priority: critical
+
+        description: |
+          Update task parameter validation from 5000 to 50000 character limit
+          to match Outpost control plane capability.
+
+        dependencies: []
+
+        interface:
+          inputs:
+            - name: schema_file
+              type: file_path
+              value: "src/schemas/dispatch.ts"
+          outputs:
+            - name: updated_schema
+              type: file_path
+              value: "src/schemas/dispatch.ts"
+
+        input_bindings:
+          schema_file: "~/projects/mcpify/src/schemas/dispatch.ts"
+
+        output:
+          artifact: "src/schemas/dispatch.ts"
+          type: modified_file
+
+        implementation:
+          location: "src/schemas/dispatch.ts"
+          change_type: modification
+          details: |
+            Change: maxLength: 5000 → maxLength: 50000
+            Line: ~15 (task field definition)
+
+        acceptance_criteria:
+          - "task field accepts up to 50000 characters"
+          - "validation error thrown for task > 50000 chars"
+          - "existing tests pass with extended limit"
+
+        test_command: "npm test -- --grep 'dispatch schema'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/schemas/dispatch.ts"
+
+        resources:
+          estimated_minutes: 5
+          complexity: low
+
+        handoff:
+          next_task: T0.2
+          context: "Task length extended, proceed to timeout extension"
+
+      # -------------------------------------------------------------------------
+      # T0.2: Extend Timeout Constraint
+      # -------------------------------------------------------------------------
+      - task_id: T0.2
+        name: "Extend timeout constraint"
+        status: pending
+        priority: critical
+
+        description: |
+          Update timeoutSeconds parameter from 3600s max to 86400s (24 hours)
+          to support long-running agent tasks.
+
+        dependencies: []
+
+        interface:
+          inputs:
+            - name: schema_file
+              type: file_path
+              value: "src/schemas/dispatch.ts"
+          outputs:
+            - name: updated_schema
+              type: file_path
+              value: "src/schemas/dispatch.ts"
+
+        implementation:
+          location: "src/schemas/dispatch.ts"
+          change_type: modification
+          details: |
+            Change: maximum: 3600 → maximum: 86400
+            Line: ~25 (timeoutSeconds field definition)
+            Also update description to reflect 24-hour maximum
+
+        acceptance_criteria:
+          - "timeoutSeconds accepts values up to 86400"
+          - "validation error thrown for timeout > 86400"
+          - "default remains 600 seconds"
+
+        test_command: "npm test -- --grep 'timeout validation'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/schemas/dispatch.ts"
+
+        resources:
+          estimated_minutes: 5
+          complexity: low
+
+        handoff:
+          next_task: T0.3
+          context: "Timeout extended, proceed to modelId schema"
+
+      # -------------------------------------------------------------------------
+      # T0.3: Add modelId Schema Field
+      # -------------------------------------------------------------------------
+      - task_id: T0.3
+        name: "Add modelId schema field"
+        status: pending
+        priority: high
+
+        description: |
+          Add optional modelId field to dispatch schema enabling specific model
+          selection per agent. Must validate against known model registry.
+
+        dependencies: []
+
+        interface:
+          inputs:
+            - name: schema_file
+              type: file_path
+              value: "src/schemas/dispatch.ts"
+          outputs:
+            - name: updated_schema
+              type: file_path
+              value: "src/schemas/dispatch.ts"
+
+        implementation:
+          location: "src/schemas/dispatch.ts"
+          change_type: addition
+          details: |
+            Add field after 'context':
+            ```typescript
+            modelId: z.string()
+              .max(100)
+              .regex(/^[a-z0-9-]+(\.[a-z0-9-]+)*$/)
+              .optional()
+              .describe('Specific model ID to use (e.g., claude-opus-4-5-20251101, gpt-5.2-codex)')
+            ```
+
+        acceptance_criteria:
+          - "modelId field accepts valid model ID strings"
+          - "modelId rejects invalid formats"
+          - "modelId is optional (undefined allowed)"
+          - "TypeScript types updated automatically via z.infer"
+
+        test_command: "npm test -- --grep 'modelId'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/schemas/dispatch.ts"
+
+        resources:
+          estimated_minutes: 10
+          complexity: low
+
+        handoff:
+          next_task: T0.4
+          context: "modelId schema added, proceed to workspaceMode"
+
+      # -------------------------------------------------------------------------
+      # T0.4: Add workspaceMode Schema Field
+      # -------------------------------------------------------------------------
+      - task_id: T0.4
+        name: "Add workspaceMode schema field"
+        status: pending
+        priority: high
+
+        description: |
+          Add optional workspaceMode field to control repository cloning behavior.
+          Enables skip-clone for simple tasks that don't need repo context.
+
+        dependencies: []
+
+        interface:
+          inputs:
+            - name: schema_file
+              type: file_path
+              value: "src/schemas/dispatch.ts"
+          outputs:
+            - name: updated_schema
+              type: file_path
+              value: "src/schemas/dispatch.ts"
+
+        implementation:
+          location: "src/schemas/dispatch.ts"
+          change_type: addition
+          details: |
+            Add field after 'modelId':
+            ```typescript
+            workspaceMode: z.enum(['full', 'minimal', 'none'])
+              .optional()
+              .default('full')
+              .describe('Workspace mode: full=clone repo, minimal=sparse checkout, none=skip clone')
+            ```
+
+        acceptance_criteria:
+          - "workspaceMode accepts 'full', 'minimal', 'none'"
+          - "workspaceMode defaults to 'full' when not specified"
+          - "Invalid values rejected with clear error"
+
+        test_command: "npm test -- --grep 'workspaceMode'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/schemas/dispatch.ts"
+
+        resources:
+          estimated_minutes: 10
+          complexity: low
+
+        handoff:
+          next_task: T0.5
+          context: "workspaceMode schema added, proceed to additionalSecrets"
+
+      # -------------------------------------------------------------------------
+      # T0.5: Add additionalSecrets Schema Field
+      # -------------------------------------------------------------------------
+      - task_id: T0.5
+        name: "Add additionalSecrets schema field"
+        status: pending
+        priority: medium
+
+        description: |
+          Add optional additionalSecrets field for injecting custom environment
+          variables into agent execution context.
+
+        dependencies: []
+
+        interface:
+          inputs:
+            - name: schema_file
+              type: file_path
+              value: "src/schemas/dispatch.ts"
+          outputs:
+            - name: updated_schema
+              type: file_path
+              value: "src/schemas/dispatch.ts"
+
+        implementation:
+          location: "src/schemas/dispatch.ts"
+          change_type: addition
+          details: |
+            Add field after 'workspaceMode':
+            ```typescript
+            additionalSecrets: z.record(z.string(), z.string())
+              .optional()
+              .describe('Additional secrets to inject as environment variables')
+            ```
+
+        acceptance_criteria:
+          - "additionalSecrets accepts key-value string pairs"
+          - "additionalSecrets is optional"
+          - "Keys validated as valid env var names"
+
+        test_command: "npm test -- --grep 'additionalSecrets'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/schemas/dispatch.ts"
+
+        resources:
+          estimated_minutes: 10
+          complexity: low
+
+        handoff:
+          next_task: T0.6
+          context: "additionalSecrets schema added, proceed to idempotencyKey"
+
+      # -------------------------------------------------------------------------
+      # T0.6: Add idempotencyKey Schema Field
+      # -------------------------------------------------------------------------
+      - task_id: T0.6
+        name: "Add idempotencyKey schema field"
+        status: pending
+        priority: medium
+
+        description: |
+          Add optional idempotencyKey field for request deduplication.
+          Prevents duplicate task execution on retry scenarios.
+
+        dependencies: []
+
+        interface:
+          inputs:
+            - name: schema_file
+              type: file_path
+              value: "src/schemas/dispatch.ts"
+          outputs:
+            - name: updated_schema
+              type: file_path
+              value: "src/schemas/dispatch.ts"
+
+        implementation:
+          location: "src/schemas/dispatch.ts"
+          change_type: addition
+          details: |
+            Add field after 'additionalSecrets':
+            ```typescript
+            idempotencyKey: z.string()
+              .uuid()
+              .optional()
+              .describe('Idempotency key for request deduplication (UUID format)')
+            ```
+
+        acceptance_criteria:
+          - "idempotencyKey accepts valid UUIDs"
+          - "idempotencyKey rejects non-UUID strings"
+          - "idempotencyKey is optional"
+
+        test_command: "npm test -- --grep 'idempotencyKey'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/schemas/dispatch.ts"
+
+        resources:
+          estimated_minutes: 5
+          complexity: low
+
+        handoff:
+          next_task: T0.7
+          context: "idempotencyKey schema added, proceed to tags"
+
+      # -------------------------------------------------------------------------
+      # T0.7: Add tags Schema Field
+      # -------------------------------------------------------------------------
+      - task_id: T0.7
+        name: "Add tags schema field"
+        status: pending
+        priority: low
+
+        description: |
+          Add optional tags field for metadata tagging of dispatch runs.
+          Enables filtering and categorization of agent tasks.
+
+        dependencies: []
+
+        interface:
+          inputs:
+            - name: schema_file
+              type: file_path
+              value: "src/schemas/dispatch.ts"
+          outputs:
+            - name: updated_schema
+              type: file_path
+              value: "src/schemas/dispatch.ts"
+
+        implementation:
+          location: "src/schemas/dispatch.ts"
+          change_type: addition
+          details: |
+            Add field after 'idempotencyKey':
+            ```typescript
+            tags: z.record(z.string(), z.string())
+              .optional()
+              .describe('Metadata tags for run categorization and filtering')
+            ```
+
+        acceptance_criteria:
+          - "tags accepts key-value string pairs"
+          - "tags is optional"
+          - "Tags propagate to run metadata"
+
+        test_command: "npm test -- --grep 'tags'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/schemas/dispatch.ts"
+
+        resources:
+          estimated_minutes: 5
+          complexity: low
+
+        handoff:
+          next_task: T0.8
+          context: "tags schema added, proceed to constraints"
+
+      # -------------------------------------------------------------------------
+      # T0.8: Add constraints Schema Field
+      # -------------------------------------------------------------------------
+      - task_id: T0.8
+        name: "Add constraints schema field"
+        status: pending
+        priority: low
+
+        description: |
+          Add optional constraints field for resource constraints on agent execution.
+          Enables memory limits, CPU limits, and other resource boundaries.
+
+        dependencies: []
+
+        interface:
+          inputs:
+            - name: schema_file
+              type: file_path
+              value: "src/schemas/dispatch.ts"
+          outputs:
+            - name: updated_schema
+              type: file_path
+              value: "src/schemas/dispatch.ts"
+
+        implementation:
+          location: "src/schemas/dispatch.ts"
+          change_type: addition
+          details: |
+            Add field after 'tags':
+            ```typescript
+            constraints: z.object({
+              maxMemoryMb: z.number().min(256).max(8192).optional(),
+              maxCpuUnits: z.number().min(256).max(4096).optional(),
+              maxDiskGb: z.number().min(1).max(100).optional(),
+            }).optional()
+              .describe('Resource constraints for agent execution')
+            ```
+
+        acceptance_criteria:
+          - "constraints accepts valid resource limits"
+          - "constraints validates min/max bounds"
+          - "constraints is optional"
+
+        test_command: "npm test -- --grep 'constraints'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/schemas/dispatch.ts"
+
+        resources:
+          estimated_minutes: 10
+          complexity: medium
+
+        handoff:
+          next_task: T1.1
+          context: "All schema fields added, proceed to MCP tool exposure"
+
+# =============================================================================
+# TIER 1: MCP TOOL INTERFACE
+# Expose new parameters in MCP tool definition
+# =============================================================================
+
+  - tier_id: T1
+    name: "MCP Tool Interface"
+    description: "Update MCP tool definition to expose all new parameters"
+    parallel: true
+
+    tasks:
+      # -------------------------------------------------------------------------
+      # T1.1: Update Tool Input Schema
+      # -------------------------------------------------------------------------
+      - task_id: T1.1
+        name: "Update MCP tool input schema"
+        status: pending
+        priority: critical
+
+        description: |
+          Update the dispatch tool's inputSchema to include all new parameters
+          with proper JSON Schema definitions for MCP protocol compliance.
+
+        dependencies:
+          - T0.3  # modelId
+          - T0.4  # workspaceMode
+          - T0.5  # additionalSecrets
+          - T0.6  # idempotencyKey
+          - T0.7  # tags
+          - T0.8  # constraints
+
+        interface:
+          inputs:
+            - name: tool_file
+              type: file_path
+              value: "src/tools/dispatch.ts"
+          outputs:
+            - name: updated_tool
+              type: file_path
+              value: "src/tools/dispatch.ts"
+
+        implementation:
+          location: "src/tools/dispatch.ts"
+          change_type: modification
+          details: |
+            Add to inputSchema.properties:
+            ```typescript
+            modelId: {
+              type: 'string',
+              description: 'Specific model ID to use',
+              maxLength: 100
+            },
+            workspaceMode: {
+              type: 'string',
+              enum: ['full', 'minimal', 'none'],
+              description: 'Workspace mode: full=clone repo, minimal=sparse, none=skip'
+            },
+            additionalSecrets: {
+              type: 'object',
+              additionalProperties: { type: 'string' },
+              description: 'Additional secrets as environment variables'
+            },
+            idempotencyKey: {
+              type: 'string',
+              format: 'uuid',
+              description: 'Idempotency key for deduplication'
+            },
+            tags: {
+              type: 'object',
+              additionalProperties: { type: 'string' },
+              description: 'Metadata tags'
+            },
+            constraints: {
+              type: 'object',
+              properties: {
+                maxMemoryMb: { type: 'number', minimum: 256, maximum: 8192 },
+                maxCpuUnits: { type: 'number', minimum: 256, maximum: 4096 },
+                maxDiskGb: { type: 'number', minimum: 1, maximum: 100 }
+              },
+              description: 'Resource constraints'
+            }
+            ```
+
+        acceptance_criteria:
+          - "All new parameters visible in MCP tool schema"
+          - "MCP protocol compliance maintained"
+          - "Tool description updated with new capabilities"
+
+        test_command: "npm test -- --grep 'dispatch tool schema'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/tools/dispatch.ts"
+
+        resources:
+          estimated_minutes: 20
+          complexity: medium
+
+        handoff:
+          next_task: T1.2
+          context: "Tool schema updated, proceed to parameter extraction"
+
+      # -------------------------------------------------------------------------
+      # T1.2: Update Parameter Extraction
+      # -------------------------------------------------------------------------
+      - task_id: T1.2
+        name: "Update parameter extraction logic"
+        status: pending
+        priority: critical
+
+        description: |
+          Update the dispatch tool handler to extract all new parameters
+          from MCP tool call arguments.
+
+        dependencies:
+          - T1.1
+
+        interface:
+          inputs:
+            - name: tool_file
+              type: file_path
+              value: "src/tools/dispatch.ts"
+          outputs:
+            - name: updated_tool
+              type: file_path
+              value: "src/tools/dispatch.ts"
+
+        implementation:
+          location: "src/tools/dispatch.ts"
+          change_type: modification
+          details: |
+            In handler function, add destructuring for new params:
+            ```typescript
+            const {
+              agent,
+              task,
+              repo,
+              branch,
+              context,
+              timeoutSeconds,
+              modelId,           // NEW
+              workspaceMode,     // NEW
+              additionalSecrets, // NEW
+              idempotencyKey,    // NEW
+              tags,              // NEW
+              constraints        // NEW
+            } = args;
+            ```
+
+        acceptance_criteria:
+          - "All parameters extracted from tool call"
+          - "Default values applied where appropriate"
+          - "Type safety maintained"
+
+        test_command: "npm test -- --grep 'parameter extraction'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/tools/dispatch.ts"
+
+        resources:
+          estimated_minutes: 10
+          complexity: low
+
+        handoff:
+          next_task: T1.3
+          context: "Parameter extraction updated, proceed to handler passthrough"
+
+      # -------------------------------------------------------------------------
+      # T1.3: Update Handler Passthrough
+      # -------------------------------------------------------------------------
+      - task_id: T1.3
+        name: "Update dispatch handler passthrough"
+        status: pending
+        priority: critical
+
+        description: |
+          Update the dispatch handler to pass all new parameters to the
+          Outpost HTTP client.
+
+        dependencies:
+          - T1.2
+
+        interface:
+          inputs:
+            - name: handler_file
+              type: file_path
+              value: "src/providers/outpost/handlers/dispatch-handler.ts"
+          outputs:
+            - name: updated_handler
+              type: file_path
+              value: "src/providers/outpost/handlers/dispatch-handler.ts"
+
+        implementation:
+          location: "src/providers/outpost/handlers/dispatch-handler.ts"
+          change_type: modification
+          details: |
+            Update dispatch call to include new parameters:
+            ```typescript
+            const result = await outpostClient.dispatch({
+              agent,
+              task,
+              repo,
+              branch,
+              context,
+              timeoutSeconds,
+              modelId,           // NEW
+              workspaceMode,     // NEW
+              additionalSecrets, // NEW
+              idempotencyKey,    // NEW
+              tags,              // NEW
+              constraints        // NEW
+            });
+            ```
+
+        acceptance_criteria:
+          - "All parameters passed to HTTP client"
+          - "No parameters dropped or modified"
+          - "Error handling unchanged"
+
+        test_command: "npm test -- --grep 'dispatch handler'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/providers/outpost/handlers/dispatch-handler.ts"
+
+        resources:
+          estimated_minutes: 15
+          complexity: low
+
+        handoff:
+          next_task: T1.4
+          context: "Handler passthrough updated, proceed to HTTP client"
+
+      # -------------------------------------------------------------------------
+      # T1.4: Update HTTP Client Interface
+      # -------------------------------------------------------------------------
+      - task_id: T1.4
+        name: "Update HTTP client dispatch interface"
+        status: pending
+        priority: critical
+
+        description: |
+          Update the Outpost HTTP client to accept and transmit all new
+          parameters in the POST body.
+
+        dependencies:
+          - T1.3
+
+        interface:
+          inputs:
+            - name: client_file
+              type: file_path
+              value: "src/providers/outpost/http-client.ts"
+          outputs:
+            - name: updated_client
+              type: file_path
+              value: "src/providers/outpost/http-client.ts"
+
+        implementation:
+          location: "src/providers/outpost/http-client.ts"
+          change_type: modification
+          details: |
+            1. Update DispatchParams interface:
+            ```typescript
+            interface DispatchParams {
+              agent: string;
+              task: string;
+              repo?: string;
+              branch?: string;
+              context?: string;
+              timeoutSeconds?: number;
+              modelId?: string;           // NEW
+              workspaceMode?: string;     // NEW
+              additionalSecrets?: Record<string, string>;  // NEW
+              idempotencyKey?: string;    // NEW
+              tags?: Record<string, string>;  // NEW
+              constraints?: {             // NEW
+                maxMemoryMb?: number;
+                maxCpuUnits?: number;
+                maxDiskGb?: number;
+              };
+            }
+            ```
+
+            2. Update POST body construction to include new fields
+
+        acceptance_criteria:
+          - "Interface accepts all new parameters"
+          - "POST body includes non-undefined parameters"
+          - "Outpost API receives complete payload"
+
+        test_command: "npm test -- --grep 'http client'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/providers/outpost/http-client.ts"
+
+        resources:
+          estimated_minutes: 20
+          complexity: medium
+
+        handoff:
+          next_task: T2.1
+          context: "HTTP client updated, proceed to model selection integration"
+
+# =============================================================================
+# TIER 2: MODEL SELECTION INTEGRATION
+# Deep integration of model selection with agent-specific validation
+# =============================================================================
+
+  - tier_id: T2
+    name: "Model Selection Integration"
+    description: "Implement comprehensive model selection with per-agent validation"
+    parallel: false
+
+    tasks:
+      # -------------------------------------------------------------------------
+      # T2.1: Create Model Registry Constants
+      # -------------------------------------------------------------------------
+      - task_id: T2.1
+        name: "Create model registry constants"
+        status: pending
+        priority: high
+
+        description: |
+          Define comprehensive model registry mapping agents to their available
+          models with tier classifications (flagship/balanced/fast).
+
+        dependencies:
+          - T1.4
+
+        interface:
+          inputs: []
+          outputs:
+            - name: registry_file
+              type: file_path
+              value: "src/constants/model-registry.ts"
+
+        implementation:
+          location: "src/constants/model-registry.ts"
+          change_type: creation
+          details: |
+            Create new file:
+            ```typescript
+            export const MODEL_REGISTRY = {
+              claude: {
+                flagship: 'claude-opus-4-5-20251101',
+                balanced: 'claude-sonnet-4-20250514',
+                fast: 'claude-haiku-3-5-20240307',
+                default: 'claude-opus-4-5-20251101',
+                all: [
+                  'claude-opus-4-5-20251101',
+                  'claude-sonnet-4-20250514',
+                  'claude-haiku-3-5-20240307'
+                ]
+              },
+              codex: {
+                flagship: 'gpt-5.2-codex',
+                balanced: 'gpt-4.5-codex',
+                fast: 'gpt-4.1-codex',
+                default: 'gpt-5.2-codex',
+                all: ['gpt-5.2-codex', 'gpt-4.5-codex', 'gpt-4.1-codex']
+              },
+              gemini: {
+                flagship: 'gemini-3-pro-preview',
+                balanced: 'gemini-2.5-flash-preview',
+                fast: 'gemini-3-flash-preview',
+                default: 'gemini-3-pro-preview',
+                all: [
+                  'gemini-3-pro-preview',
+                  'gemini-2.5-flash-preview',
+                  'gemini-3-flash-preview'
+                ]
+              },
+              aider: {
+                flagship: 'deepseek/deepseek-coder',
+                balanced: 'deepseek/deepseek-coder',
+                fast: 'deepseek/deepseek-coder',
+                default: 'deepseek/deepseek-coder',
+                all: ['deepseek/deepseek-coder']
+              },
+              grok: {
+                flagship: 'grok-4.1',
+                balanced: 'grok-3',
+                fast: 'grok-2',
+                default: 'grok-4.1',
+                all: ['grok-4.1', 'grok-3', 'grok-2']
+              }
+            } as const;
+
+            export type AgentName = keyof typeof MODEL_REGISTRY;
+            export type ModelTier = 'flagship' | 'balanced' | 'fast';
+            ```
+
+        acceptance_criteria:
+          - "Registry covers all 5 agents"
+          - "Each agent has flagship/balanced/fast tiers"
+          - "Types exported for validation use"
+
+        test_command: "npm test -- --grep 'model registry'"
+
+        rollback:
+          strategy: file_delete
+          command: "rm src/constants/model-registry.ts"
+
+        resources:
+          estimated_minutes: 15
+          complexity: low
+
+        handoff:
+          next_task: T2.2
+          context: "Model registry created, proceed to validation utility"
+
+      # -------------------------------------------------------------------------
+      # T2.2: Create Model Validation Utility
+      # -------------------------------------------------------------------------
+      - task_id: T2.2
+        name: "Create model validation utility"
+        status: pending
+        priority: high
+
+        description: |
+          Create utility function to validate modelId against agent's available
+          models and resolve tier shortcuts.
+
+        dependencies:
+          - T2.1
+
+        interface:
+          inputs:
+            - name: registry_file
+              type: file_path
+              value: "src/constants/model-registry.ts"
+          outputs:
+            - name: validator_file
+              type: file_path
+              value: "src/utils/model-validator.ts"
+
+        implementation:
+          location: "src/utils/model-validator.ts"
+          change_type: creation
+          details: |
+            Create new file:
+            ```typescript
+            import { MODEL_REGISTRY, AgentName, ModelTier } from '../constants/model-registry';
+
+            export interface ModelValidationResult {
+              valid: boolean;
+              resolvedModelId: string;
+              error?: string;
+            }
+
+            export function validateAndResolveModel(
+              agent: AgentName,
+              modelId?: string
+            ): ModelValidationResult {
+              const registry = MODEL_REGISTRY[agent];
+
+              if (!registry) {
+                return {
+                  valid: false,
+                  resolvedModelId: '',
+                  error: `Unknown agent: ${agent}`
+                };
+              }
+
+              // No modelId specified - use default
+              if (!modelId) {
+                return {
+                  valid: true,
+                  resolvedModelId: registry.default
+                };
+              }
+
+              // Check for tier shortcut (flagship, balanced, fast)
+              if (['flagship', 'balanced', 'fast'].includes(modelId)) {
+                return {
+                  valid: true,
+                  resolvedModelId: registry[modelId as ModelTier]
+                };
+              }
+
+              // Validate against available models
+              if (registry.all.includes(modelId)) {
+                return {
+                  valid: true,
+                  resolvedModelId: modelId
+                };
+              }
+
+              return {
+                valid: false,
+                resolvedModelId: '',
+                error: `Model '${modelId}' not available for agent '${agent}'. ` +
+                       `Available: ${registry.all.join(', ')}`
+              };
+            }
+            ```
+
+        acceptance_criteria:
+          - "Validates modelId against agent's available models"
+          - "Resolves tier shortcuts (flagship/balanced/fast)"
+          - "Returns default model when modelId not specified"
+          - "Clear error messages for invalid models"
+
+        test_command: "npm test -- --grep 'model validator'"
+
+        rollback:
+          strategy: file_delete
+          command: "rm src/utils/model-validator.ts"
+
+        resources:
+          estimated_minutes: 20
+          complexity: medium
+
+        handoff:
+          next_task: T2.3
+          context: "Validation utility created, proceed to handler integration"
+
+      # -------------------------------------------------------------------------
+      # T2.3: Integrate Validation in Dispatch Handler
+      # -------------------------------------------------------------------------
+      - task_id: T2.3
+        name: "Integrate model validation in handler"
+        status: pending
+        priority: high
+
+        description: |
+          Integrate model validation into dispatch handler, validating before
+          sending request to Outpost.
+
+        dependencies:
+          - T2.2
+
+        interface:
+          inputs:
+            - name: handler_file
+              type: file_path
+              value: "src/providers/outpost/handlers/dispatch-handler.ts"
+            - name: validator_file
+              type: file_path
+              value: "src/utils/model-validator.ts"
+          outputs:
+            - name: updated_handler
+              type: file_path
+              value: "src/providers/outpost/handlers/dispatch-handler.ts"
+
+        implementation:
+          location: "src/providers/outpost/handlers/dispatch-handler.ts"
+          change_type: modification
+          details: |
+            Add validation before dispatch:
+            ```typescript
+            import { validateAndResolveModel } from '../../utils/model-validator';
+
+            // In handler function:
+            const modelValidation = validateAndResolveModel(agent, modelId);
+            if (!modelValidation.valid) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    error: 'Invalid model selection',
+                    details: modelValidation.error
+                  })
+                }],
+                isError: true
+              };
+            }
+
+            // Use resolved model in dispatch
+            const result = await outpostClient.dispatch({
+              ...params,
+              modelId: modelValidation.resolvedModelId
+            });
+            ```
+
+        acceptance_criteria:
+          - "Model validation runs before dispatch"
+          - "Invalid models return clear error"
+          - "Tier shortcuts resolved to full model IDs"
+          - "Valid models passed through to Outpost"
+
+        test_command: "npm test -- --grep 'dispatch handler model validation'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/providers/outpost/handlers/dispatch-handler.ts"
+
+        resources:
+          estimated_minutes: 20
+          complexity: medium
+
+        handoff:
+          next_task: T2.4
+          context: "Handler integration complete, proceed to documentation"
+
+      # -------------------------------------------------------------------------
+      # T2.4: Document Model Selection in Tool Description
+      # -------------------------------------------------------------------------
+      - task_id: T2.4
+        name: "Document model selection in tool"
+        status: pending
+        priority: medium
+
+        description: |
+          Update dispatch tool description to document available models per
+          agent and tier shortcut usage.
+
+        dependencies:
+          - T2.3
+
+        interface:
+          inputs:
+            - name: tool_file
+              type: file_path
+              value: "src/tools/dispatch.ts"
+          outputs:
+            - name: updated_tool
+              type: file_path
+              value: "src/tools/dispatch.ts"
+
+        implementation:
+          location: "src/tools/dispatch.ts"
+          change_type: modification
+          details: |
+            Update tool description to include model documentation:
+            ```typescript
+            description: `Dispatch a task to an Outpost agent for execution.
+
+            Model Selection:
+            - Use 'modelId' to specify a model, or use tier shortcuts: 'flagship', 'balanced', 'fast'
+            - Claude: claude-opus-4-5-20251101 (flagship), claude-sonnet-4-20250514 (balanced), claude-haiku-3-5-20240307 (fast)
+            - Codex: gpt-5.2-codex (flagship), gpt-4.5-codex (balanced), gpt-4.1-codex (fast)
+            - Gemini: gemini-3-pro-preview (flagship), gemini-2.5-flash-preview (balanced), gemini-3-flash-preview (fast)
+            - Aider: deepseek/deepseek-coder (all tiers)
+            - Grok: grok-4.1 (flagship), grok-3 (balanced), grok-2 (fast)
+
+            Workspace Modes:
+            - 'full' (default): Clone full repository
+            - 'minimal': Sparse checkout (faster)
+            - 'none': Skip repo clone entirely (for tasks not requiring code context)`
+            ```
+
+        acceptance_criteria:
+          - "Tool description documents all models"
+          - "Tier shortcuts documented"
+          - "Workspace modes documented"
+          - "MCP clients can display this info"
+
+        test_command: "npm test -- --grep 'tool description'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/tools/dispatch.ts"
+
+        resources:
+          estimated_minutes: 10
+          complexity: low
+
+        handoff:
+          next_task: T3.1
+          context: "Model selection complete, proceed to workspace control"
+
+# =============================================================================
+# TIER 3: WORKSPACE CONTROL IMPLEMENTATION
+# Implement workspace mode handling and skip-clone capability
+# =============================================================================
+
+  - tier_id: T3
+    name: "Workspace Control"
+    description: "Implement workspace mode handling for clone control"
+    parallel: false
+
+    tasks:
+      # -------------------------------------------------------------------------
+      # T3.1: Add Workspace Mode to Outpost Control Plane
+      # -------------------------------------------------------------------------
+      - task_id: T3.1
+        name: "Add workspaceMode to Outpost dispatch model"
+        status: pending
+        priority: high
+
+        description: |
+          Ensure Outpost control plane dispatch model accepts and processes
+          workspaceMode parameter.
+
+        dependencies:
+          - T2.4
+
+        interface:
+          inputs:
+            - name: dispatch_model
+              type: file_path
+              value: "src/models/dispatch.model.ts"
+          outputs:
+            - name: updated_model
+              type: file_path
+              value: "src/models/dispatch.model.ts"
+
+        implementation:
+          location: "outpost/src/control-plane/src/models/dispatch.model.ts"
+          change_type: modification
+          details: |
+            Add to CreateDispatchSchema:
+            ```typescript
+            workspaceMode: z.enum(['full', 'minimal', 'none'])
+              .optional()
+              .default('full')
+              .describe('Workspace initialization mode')
+            ```
+
+        acceptance_criteria:
+          - "workspaceMode accepted in dispatch requests"
+          - "Default value is 'full'"
+          - "Validation rejects invalid modes"
+
+        test_command: "npm test -- --grep 'dispatch model'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/models/dispatch.model.ts"
+
+        required_capabilities:
+          - "outpost-control-plane-access"
+
+        resources:
+          estimated_minutes: 15
+          complexity: low
+
+        handoff:
+          next_task: T3.2
+          context: "Dispatch model updated, proceed to task launcher"
+
+      # -------------------------------------------------------------------------
+      # T3.2: Update Task Launcher Workspace Handling
+      # -------------------------------------------------------------------------
+      - task_id: T3.2
+        name: "Update task launcher for workspace modes"
+        status: pending
+        priority: high
+
+        description: |
+          Modify task launcher to handle different workspace modes,
+          conditionally skipping git clone for 'none' mode.
+
+        dependencies:
+          - T3.1
+
+        interface:
+          inputs:
+            - name: launcher_file
+              type: file_path
+              value: "src/services/task-launcher.ts"
+          outputs:
+            - name: updated_launcher
+              type: file_path
+              value: "src/services/task-launcher.ts"
+
+        implementation:
+          location: "outpost/src/control-plane/src/services/task-launcher.ts"
+          change_type: modification
+          details: |
+            Update workspace initialization logic:
+            ```typescript
+            async initializeWorkspace(
+              runId: string,
+              repo?: string,
+              branch?: string,
+              workspaceMode: 'full' | 'minimal' | 'none' = 'full'
+            ): Promise<WorkspaceResult> {
+              if (workspaceMode === 'none') {
+                // Create empty workspace directory only
+                return this.createEmptyWorkspace(runId);
+              }
+
+              if (workspaceMode === 'minimal') {
+                // Sparse checkout with only essential files
+                return this.createSparseWorkspace(runId, repo, branch);
+              }
+
+              // Full clone (existing behavior)
+              return this.createFullWorkspace(runId, repo, branch);
+            }
+            ```
+
+        acceptance_criteria:
+          - "workspaceMode='none' skips git clone"
+          - "workspaceMode='minimal' uses sparse checkout"
+          - "workspaceMode='full' maintains existing behavior"
+          - "Empty workspace created for 'none' mode"
+
+        test_command: "npm test -- --grep 'task launcher workspace'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/services/task-launcher.ts"
+
+        required_capabilities:
+          - "outpost-control-plane-access"
+
+        resources:
+          estimated_minutes: 30
+          complexity: high
+
+        handoff:
+          next_task: T3.3
+          context: "Task launcher updated, proceed to sparse checkout implementation"
+
+      # -------------------------------------------------------------------------
+      # T3.3: Implement Sparse Checkout Mode
+      # -------------------------------------------------------------------------
+      - task_id: T3.3
+        name: "Implement sparse checkout mode"
+        status: pending
+        priority: medium
+
+        description: |
+          Implement minimal workspace initialization using git sparse checkout
+          for faster workspace setup.
+
+        dependencies:
+          - T3.2
+
+        interface:
+          inputs:
+            - name: launcher_file
+              type: file_path
+              value: "src/services/task-launcher.ts"
+          outputs:
+            - name: updated_launcher
+              type: file_path
+              value: "src/services/task-launcher.ts"
+
+        implementation:
+          location: "outpost/src/control-plane/src/services/task-launcher.ts"
+          change_type: addition
+          details: |
+            Add sparse checkout implementation:
+            ```typescript
+            private async createSparseWorkspace(
+              runId: string,
+              repo?: string,
+              branch?: string
+            ): Promise<WorkspaceResult> {
+              const workspaceDir = this.getWorkspaceDir(runId);
+              await fs.mkdir(workspaceDir, { recursive: true });
+
+              if (!repo) {
+                return { path: workspaceDir, type: 'empty' };
+              }
+
+              // Initialize sparse checkout
+              await this.execGit(workspaceDir, ['init']);
+              await this.execGit(workspaceDir, ['config', 'core.sparseCheckout', 'true']);
+
+              // Only checkout common config files
+              await fs.writeFile(
+                path.join(workspaceDir, '.git/info/sparse-checkout'),
+                '*.md\n*.json\n*.yaml\n*.yml\nsrc/\n'
+              );
+
+              const repoUrl = this.buildRepoUrl(repo);
+              await this.execGit(workspaceDir, ['remote', 'add', 'origin', repoUrl]);
+              await this.execGit(workspaceDir, ['fetch', '--depth=1', 'origin', branch || 'main']);
+              await this.execGit(workspaceDir, ['checkout', branch || 'main']);
+
+              return { path: workspaceDir, type: 'sparse' };
+            }
+            ```
+
+        acceptance_criteria:
+          - "Sparse checkout only fetches specified patterns"
+          - "Workspace setup time reduced by 50%+ for large repos"
+          - "Essential files (src/, configs) still available"
+          - "Depth=1 shallow clone for speed"
+
+        test_command: "npm test -- --grep 'sparse checkout'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/services/task-launcher.ts"
+
+        required_capabilities:
+          - "outpost-control-plane-access"
+
+        resources:
+          estimated_minutes: 30
+          complexity: high
+
+        handoff:
+          next_task: T3.4
+          context: "Sparse checkout implemented, proceed to testing"
+
+      # -------------------------------------------------------------------------
+      # T3.4: Add Workspace Mode Integration Tests
+      # -------------------------------------------------------------------------
+      - task_id: T3.4
+        name: "Add workspace mode integration tests"
+        status: pending
+        priority: medium
+
+        description: |
+          Create integration tests verifying all workspace modes function
+          correctly in real dispatch scenarios.
+
+        dependencies:
+          - T3.3
+
+        interface:
+          inputs:
+            - name: test_dir
+              type: directory
+              value: "tests/integration/"
+          outputs:
+            - name: test_file
+              type: file_path
+              value: "tests/integration/workspace-modes.test.ts"
+
+        implementation:
+          location: "outpost/src/control-plane/tests/integration/workspace-modes.test.ts"
+          change_type: creation
+          details: |
+            Create comprehensive test suite:
+            ```typescript
+            describe('Workspace Modes', () => {
+              it('should clone full repo with workspaceMode=full', async () => {
+                const result = await dispatch({
+                  agent: 'claude',
+                  task: 'List files in workspace',
+                  repo: 'zeroechelon/outpost',
+                  workspaceMode: 'full'
+                });
+                expect(result.workspace.files).toContain('package.json');
+                expect(result.workspace.files).toContain('src/');
+              });
+
+              it('should skip clone with workspaceMode=none', async () => {
+                const result = await dispatch({
+                  agent: 'claude',
+                  task: 'Write a haiku about coding',
+                  workspaceMode: 'none'
+                });
+                expect(result.workspace.type).toBe('empty');
+                expect(result.status).toBe('COMPLETED');
+              });
+
+              it('should sparse checkout with workspaceMode=minimal', async () => {
+                const result = await dispatch({
+                  agent: 'claude',
+                  task: 'Read package.json',
+                  repo: 'zeroechelon/outpost',
+                  workspaceMode: 'minimal'
+                });
+                expect(result.workspace.type).toBe('sparse');
+                expect(result.workspace.files).toContain('package.json');
+              });
+            });
+            ```
+
+        acceptance_criteria:
+          - "All three workspace modes tested"
+          - "Tests verify file presence/absence"
+          - "Tests verify execution completes successfully"
+          - "Performance metrics captured"
+
+        test_command: "npm test -- --grep 'Workspace Modes'"
+
+        rollback:
+          strategy: file_delete
+          command: "rm tests/integration/workspace-modes.test.ts"
+
+        required_capabilities:
+          - "outpost-control-plane-access"
+
+        resources:
+          estimated_minutes: 25
+          complexity: medium
+
+        handoff:
+          next_task: T4.1
+          context: "Workspace control complete, proceed to credential handling"
+
+# =============================================================================
+# TIER 4: CREDENTIAL & SECRET INJECTION
+# Implement additionalSecrets and enhanced credential handling
+# =============================================================================
+
+  - tier_id: T4
+    name: "Credential & Secret Injection"
+    description: "Implement additionalSecrets and credential management"
+    parallel: true
+
+    tasks:
+      # -------------------------------------------------------------------------
+      # T4.1: Extend Secret Injector Service
+      # -------------------------------------------------------------------------
+      - task_id: T4.1
+        name: "Extend secret injector for additionalSecrets"
+        status: pending
+        priority: high
+
+        description: |
+          Extend the Outpost secret injector service to accept and inject
+          custom secrets from dispatch requests.
+
+        dependencies:
+          - T3.4
+
+        interface:
+          inputs:
+            - name: injector_file
+              type: file_path
+              value: "src/services/secret-injector.ts"
+          outputs:
+            - name: updated_injector
+              type: file_path
+              value: "src/services/secret-injector.ts"
+
+        implementation:
+          location: "outpost/src/control-plane/src/services/secret-injector.ts"
+          change_type: modification
+          details: |
+            Update injectSecrets method:
+            ```typescript
+            async injectSecrets(
+              runId: string,
+              agent: string,
+              additionalSecrets?: Record<string, string>
+            ): Promise<Record<string, string>> {
+              const secrets: Record<string, string> = {};
+
+              // Inject agent-specific secrets (existing)
+              const agentSecrets = await this.getAgentSecrets(agent);
+              Object.assign(secrets, agentSecrets);
+
+              // Inject additional custom secrets
+              if (additionalSecrets) {
+                // Validate secret names (no override of system secrets)
+                for (const key of Object.keys(additionalSecrets)) {
+                  if (this.isSystemSecret(key)) {
+                    throw new Error(`Cannot override system secret: ${key}`);
+                  }
+                  secrets[key] = additionalSecrets[key];
+                }
+              }
+
+              return secrets;
+            }
+
+            private isSystemSecret(key: string): boolean {
+              const systemSecrets = [
+                'AWS_ACCESS_KEY_ID',
+                'AWS_SECRET_ACCESS_KEY',
+                'ANTHROPIC_API_KEY',
+                'OPENAI_API_KEY'
+              ];
+              return systemSecrets.includes(key);
+            }
+            ```
+
+        acceptance_criteria:
+          - "additionalSecrets injected into environment"
+          - "System secrets cannot be overridden"
+          - "Secret values not logged"
+          - "Validation errors clear and actionable"
+
+        test_command: "npm test -- --grep 'secret injector'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/services/secret-injector.ts"
+
+        required_capabilities:
+          - "outpost-control-plane-access"
+
+        resources:
+          estimated_minutes: 25
+          complexity: medium
+
+        handoff:
+          next_task: T4.2
+          context: "Secret injector extended, proceed to GitHub token handling"
+
+      # -------------------------------------------------------------------------
+      # T4.2: Add GitHub Token Handling
+      # -------------------------------------------------------------------------
+      - task_id: T4.2
+        name: "Add GitHub token special handling"
+        status: pending
+        priority: high
+
+        description: |
+          Add special handling for GITHUB_TOKEN in additionalSecrets to
+          configure git credential store for private repo access.
+
+        dependencies:
+          - T4.1
+
+        interface:
+          inputs:
+            - name: injector_file
+              type: file_path
+              value: "src/services/secret-injector.ts"
+          outputs:
+            - name: updated_injector
+              type: file_path
+              value: "src/services/secret-injector.ts"
+
+        implementation:
+          location: "outpost/src/control-plane/src/services/secret-injector.ts"
+          change_type: modification
+          details: |
+            Add GitHub token configuration:
+            ```typescript
+            async configureGitCredentials(
+              workspaceDir: string,
+              githubToken?: string
+            ): Promise<void> {
+              if (!githubToken) return;
+
+              // Configure git credential store
+              const credentialPath = path.join(workspaceDir, '.git-credentials');
+              await fs.writeFile(
+                credentialPath,
+                `https://x-access-token:${githubToken}@github.com\n`,
+                { mode: 0o600 }
+              );
+
+              await this.execGit(workspaceDir, [
+                'config', 'credential.helper', `store --file=${credentialPath}`
+              ]);
+            }
+            ```
+
+        acceptance_criteria:
+          - "GITHUB_TOKEN configures git credential store"
+          - "Private repos accessible with token"
+          - "Credential file has restricted permissions (600)"
+          - "Token not exposed in logs"
+
+        test_command: "npm test -- --grep 'GitHub token'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/services/secret-injector.ts"
+
+        required_capabilities:
+          - "outpost-control-plane-access"
+
+        resources:
+          estimated_minutes: 20
+          complexity: medium
+
+        handoff:
+          next_task: T4.3
+          context: "GitHub token handling complete, proceed to secret validation"
+
+      # -------------------------------------------------------------------------
+      # T4.3: Add Secret Value Validation
+      # -------------------------------------------------------------------------
+      - task_id: T4.3
+        name: "Add secret value validation"
+        status: pending
+        priority: medium
+
+        description: |
+          Add validation for secret key names and value lengths to prevent
+          injection attacks and environment corruption.
+
+        dependencies:
+          - T4.1
+
+        interface:
+          inputs:
+            - name: injector_file
+              type: file_path
+              value: "src/services/secret-injector.ts"
+          outputs:
+            - name: updated_injector
+              type: file_path
+              value: "src/services/secret-injector.ts"
+
+        implementation:
+          location: "outpost/src/control-plane/src/services/secret-injector.ts"
+          change_type: addition
+          details: |
+            Add validation functions:
+            ```typescript
+            private validateSecretKey(key: string): void {
+              // Must be valid env var name
+              if (!/^[A-Z][A-Z0-9_]*$/.test(key)) {
+                throw new Error(
+                  `Invalid secret key '${key}': must be uppercase with underscores`
+                );
+              }
+
+              // Max length
+              if (key.length > 128) {
+                throw new Error(`Secret key too long: ${key.length} > 128`);
+              }
+            }
+
+            private validateSecretValue(key: string, value: string): void {
+              // Max value length (32KB)
+              if (value.length > 32768) {
+                throw new Error(`Secret value for '${key}' too long: ${value.length} > 32768`);
+              }
+
+              // No null bytes
+              if (value.includes('\0')) {
+                throw new Error(`Secret value for '${key}' contains null bytes`);
+              }
+            }
+            ```
+
+        acceptance_criteria:
+          - "Invalid key formats rejected"
+          - "Oversized values rejected"
+          - "Null bytes rejected"
+          - "Clear error messages for violations"
+
+        test_command: "npm test -- --grep 'secret validation'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/services/secret-injector.ts"
+
+        required_capabilities:
+          - "outpost-control-plane-access"
+
+        resources:
+          estimated_minutes: 15
+          complexity: low
+
+        handoff:
+          next_task: T4.4
+          context: "Secret validation complete, proceed to audit logging"
+
+      # -------------------------------------------------------------------------
+      # T4.4: Add Secret Injection Audit Logging
+      # -------------------------------------------------------------------------
+      - task_id: T4.4
+        name: "Add secret injection audit logging"
+        status: pending
+        priority: medium
+
+        description: |
+          Add audit logging for secret injection operations, logging key names
+          (not values) for security compliance.
+
+        dependencies:
+          - T4.3
+
+        interface:
+          inputs:
+            - name: injector_file
+              type: file_path
+              value: "src/services/secret-injector.ts"
+          outputs:
+            - name: updated_injector
+              type: file_path
+              value: "src/services/secret-injector.ts"
+
+        implementation:
+          location: "outpost/src/control-plane/src/services/secret-injector.ts"
+          change_type: modification
+          details: |
+            Add audit logging:
+            ```typescript
+            private auditSecretInjection(
+              runId: string,
+              secretKeys: string[],
+              source: 'agent' | 'additional'
+            ): void {
+              this.logger.info({
+                event: 'secret_injection',
+                runId,
+                secretCount: secretKeys.length,
+                secretKeys,  // Names only, never values
+                source,
+                timestamp: new Date().toISOString()
+              });
+            }
+            ```
+
+        acceptance_criteria:
+          - "All secret injections logged"
+          - "Secret values NEVER logged"
+          - "Audit trail includes run ID"
+          - "Source (agent vs additional) tracked"
+
+        test_command: "npm test -- --grep 'audit logging'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/services/secret-injector.ts"
+
+        required_capabilities:
+          - "outpost-control-plane-access"
+
+        resources:
+          estimated_minutes: 10
+          complexity: low
+
+        handoff:
+          next_task: T5.1
+          context: "Credential handling complete, proceed to advanced controls"
+
+# =============================================================================
+# TIER 5: ADVANCED CONTROL FEATURES
+# Implement idempotencyKey, tags, and constraints
+# =============================================================================
+
+  - tier_id: T5
+    name: "Advanced Control Features"
+    description: "Implement idempotency, tagging, and resource constraints"
+    parallel: true
+
+    tasks:
+      # -------------------------------------------------------------------------
+      # T5.1: Implement Idempotency Key Handling
+      # -------------------------------------------------------------------------
+      - task_id: T5.1
+        name: "Implement idempotency key handling"
+        status: pending
+        priority: medium
+
+        description: |
+          Implement idempotency key support to prevent duplicate task execution
+          on retry scenarios.
+
+        dependencies:
+          - T4.4
+
+        interface:
+          inputs:
+            - name: dispatch_service
+              type: file_path
+              value: "src/services/dispatch.service.ts"
+          outputs:
+            - name: updated_service
+              type: file_path
+              value: "src/services/dispatch.service.ts"
+
+        implementation:
+          location: "outpost/src/control-plane/src/services/dispatch.service.ts"
+          change_type: modification
+          details: |
+            Add idempotency checking:
+            ```typescript
+            async dispatch(params: DispatchParams): Promise<DispatchResult> {
+              // Check idempotency key
+              if (params.idempotencyKey) {
+                const existingRun = await this.runRepository.findByIdempotencyKey(
+                  params.idempotencyKey
+                );
+
+                if (existingRun) {
+                  this.logger.info({
+                    event: 'idempotent_request',
+                    idempotencyKey: params.idempotencyKey,
+                    existingRunId: existingRun.runId
+                  });
+                  return {
+                    runId: existingRun.runId,
+                    status: existingRun.status,
+                    idempotent: true
+                  };
+                }
+              }
+
+              // Create new run
+              const run = await this.createRun(params);
+
+              // Store idempotency key
+              if (params.idempotencyKey) {
+                await this.runRepository.setIdempotencyKey(
+                  run.runId,
+                  params.idempotencyKey
+                );
+              }
+
+              return { runId: run.runId, status: 'PENDING', idempotent: false };
+            }
+            ```
+
+        acceptance_criteria:
+          - "Duplicate requests with same key return existing run"
+          - "New requests create new runs"
+          - "Idempotency key stored with run"
+          - "Response indicates if request was idempotent"
+
+        test_command: "npm test -- --grep 'idempotency'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/services/dispatch.service.ts"
+
+        required_capabilities:
+          - "outpost-control-plane-access"
+
+        resources:
+          estimated_minutes: 30
+          complexity: medium
+
+        handoff:
+          next_task: T5.2
+          context: "Idempotency implemented, proceed to tagging"
+
+      # -------------------------------------------------------------------------
+      # T5.2: Implement Run Tagging
+      # -------------------------------------------------------------------------
+      - task_id: T5.2
+        name: "Implement run tagging"
+        status: pending
+        priority: low
+
+        description: |
+          Implement metadata tagging for runs to enable filtering and
+          categorization in list_runs queries.
+
+        dependencies:
+          - T4.4
+
+        interface:
+          inputs:
+            - name: run_model
+              type: file_path
+              value: "src/models/run.model.ts"
+          outputs:
+            - name: updated_model
+              type: file_path
+              value: "src/models/run.model.ts"
+
+        implementation:
+          location: "outpost/src/control-plane/src/models/run.model.ts"
+          change_type: modification
+          details: |
+            Add tags field to run schema:
+            ```typescript
+            tags: z.record(z.string(), z.string())
+              .optional()
+              .describe('Metadata tags for filtering')
+            ```
+
+            Update DynamoDB schema:
+            ```typescript
+            tags: {
+              type: 'map',
+              schema: {
+                key: { type: 'string' },
+                value: { type: 'string' }
+              }
+            }
+            ```
+
+        acceptance_criteria:
+          - "Tags stored with run record"
+          - "Tags returned in run details"
+          - "list_runs supports tag filtering"
+          - "Tag key/value limits enforced"
+
+        test_command: "npm test -- --grep 'run tagging'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/models/run.model.ts"
+
+        required_capabilities:
+          - "outpost-control-plane-access"
+
+        resources:
+          estimated_minutes: 25
+          complexity: medium
+
+        handoff:
+          next_task: T5.3
+          context: "Tagging implemented, proceed to constraint handling"
+
+      # -------------------------------------------------------------------------
+      # T5.3: Implement Resource Constraints
+      # -------------------------------------------------------------------------
+      - task_id: T5.3
+        name: "Implement resource constraints"
+        status: pending
+        priority: low
+
+        description: |
+          Implement resource constraint handling to pass memory, CPU, and disk
+          limits to ECS task definitions.
+
+        dependencies:
+          - T4.4
+
+        interface:
+          inputs:
+            - name: task_launcher
+              type: file_path
+              value: "src/services/task-launcher.ts"
+          outputs:
+            - name: updated_launcher
+              type: file_path
+              value: "src/services/task-launcher.ts"
+
+        implementation:
+          location: "outpost/src/control-plane/src/services/task-launcher.ts"
+          change_type: modification
+          details: |
+            Add constraint handling:
+            ```typescript
+            private buildTaskDefinitionOverrides(
+              constraints?: ResourceConstraints
+            ): TaskDefinitionOverrides {
+              const overrides: TaskDefinitionOverrides = {};
+
+              if (constraints?.maxMemoryMb) {
+                overrides.memory = String(constraints.maxMemoryMb);
+              }
+
+              if (constraints?.maxCpuUnits) {
+                overrides.cpu = String(constraints.maxCpuUnits);
+              }
+
+              // Disk handled via EFS configuration
+              if (constraints?.maxDiskGb) {
+                overrides.ephemeralStorage = {
+                  sizeInGiB: constraints.maxDiskGb
+                };
+              }
+
+              return overrides;
+            }
+            ```
+
+        acceptance_criteria:
+          - "Memory constraints passed to ECS"
+          - "CPU constraints passed to ECS"
+          - "Disk constraints configure ephemeral storage"
+          - "Invalid constraints rejected before task creation"
+
+        test_command: "npm test -- --grep 'resource constraints'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/services/task-launcher.ts"
+
+        required_capabilities:
+          - "outpost-control-plane-access"
+
+        resources:
+          estimated_minutes: 30
+          complexity: medium
+
+        handoff:
+          next_task: T5.4
+          context: "Constraints implemented, proceed to list_runs filter"
+
+      # -------------------------------------------------------------------------
+      # T5.4: Add Tag Filtering to list_runs
+      # -------------------------------------------------------------------------
+      - task_id: T5.4
+        name: "Add tag filtering to list_runs"
+        status: pending
+        priority: low
+
+        description: |
+          Update MCPify list_runs tool to support filtering by tags.
+
+        dependencies:
+          - T5.2
+
+        interface:
+          inputs:
+            - name: list_runs_schema
+              type: file_path
+              value: "src/schemas/list-runs.ts"
+          outputs:
+            - name: updated_schema
+              type: file_path
+              value: "src/schemas/list-runs.ts"
+
+        implementation:
+          location: "mcpify/src/schemas/list-runs.ts"
+          change_type: modification
+          details: |
+            Add tags filter:
+            ```typescript
+            tags: z.record(z.string(), z.string())
+              .optional()
+              .describe('Filter runs by tag key-value pairs (AND logic)')
+            ```
+
+            Update tool inputSchema:
+            ```typescript
+            tags: {
+              type: 'object',
+              additionalProperties: { type: 'string' },
+              description: 'Filter by tags (all must match)'
+            }
+            ```
+
+        acceptance_criteria:
+          - "list_runs accepts tags filter parameter"
+          - "Multiple tags use AND logic"
+          - "Empty tags returns all runs"
+          - "Non-matching tags return empty results"
+
+        test_command: "npm test -- --grep 'list runs tags'"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- src/schemas/list-runs.ts"
+
+        resources:
+          estimated_minutes: 20
+          complexity: medium
+
+        handoff:
+          next_task: T6.1
+          context: "Advanced controls complete, proceed to testing"
+
+# =============================================================================
+# TIER 6: TESTING & VALIDATION
+# Comprehensive testing of all enhancements
+# =============================================================================
+
+  - tier_id: T6
+    name: "Testing & Validation"
+    description: "Comprehensive testing and validation of all enhancements"
+    parallel: false
+
+    tasks:
+      # -------------------------------------------------------------------------
+      # T6.1: Unit Tests for Schema Changes
+      # -------------------------------------------------------------------------
+      - task_id: T6.1
+        name: "Create unit tests for schema changes"
+        status: pending
+        priority: critical
+
+        description: |
+          Create comprehensive unit tests for all Zod schema additions
+          and modifications.
+
+        dependencies:
+          - T5.4
+
+        interface:
+          inputs:
+            - name: test_dir
+              type: directory
+              value: "tests/unit/"
+          outputs:
+            - name: test_file
+              type: file_path
+              value: "tests/unit/dispatch-schema.test.ts"
+
+        implementation:
+          location: "mcpify/tests/unit/dispatch-schema.test.ts"
+          change_type: creation
+          details: |
+            Create comprehensive schema tests:
+            ```typescript
+            describe('Dispatch Schema', () => {
+              describe('task', () => {
+                it('accepts up to 50000 characters', () => {
+                  const longTask = 'x'.repeat(50000);
+                  expect(() => DispatchSchema.parse({ agent: 'claude', task: longTask }))
+                    .not.toThrow();
+                });
+
+                it('rejects > 50000 characters', () => {
+                  const tooLong = 'x'.repeat(50001);
+                  expect(() => DispatchSchema.parse({ agent: 'claude', task: tooLong }))
+                    .toThrow();
+                });
+              });
+
+              describe('timeoutSeconds', () => {
+                it('accepts up to 86400 seconds', () => {
+                  expect(() => DispatchSchema.parse({
+                    agent: 'claude',
+                    task: 'test',
+                    timeoutSeconds: 86400
+                  })).not.toThrow();
+                });
+              });
+
+              describe('modelId', () => {
+                it('accepts valid model IDs', () => {
+                  expect(() => DispatchSchema.parse({
+                    agent: 'claude',
+                    task: 'test',
+                    modelId: 'claude-opus-4-5-20251101'
+                  })).not.toThrow();
+                });
+              });
+
+              // ... tests for all new fields
+            });
+            ```
+
+        acceptance_criteria:
+          - "All new schema fields have tests"
+          - "Boundary conditions tested"
+          - "Invalid inputs tested"
+          - "100% schema coverage"
+
+        test_command: "npm test -- tests/unit/dispatch-schema.test.ts"
+
+        rollback:
+          strategy: file_delete
+          command: "rm tests/unit/dispatch-schema.test.ts"
+
+        resources:
+          estimated_minutes: 45
+          complexity: medium
+
+        handoff:
+          next_task: T6.2
+          context: "Unit tests created, proceed to integration tests"
+
+      # -------------------------------------------------------------------------
+      # T6.2: Integration Tests for Full Dispatch Flow
+      # -------------------------------------------------------------------------
+      - task_id: T6.2
+        name: "Create integration tests for dispatch flow"
+        status: pending
+        priority: critical
+
+        description: |
+          Create integration tests verifying end-to-end dispatch with all new
+          parameters.
+
+        dependencies:
+          - T6.1
+
+        interface:
+          inputs:
+            - name: test_dir
+              type: directory
+              value: "tests/integration/"
+          outputs:
+            - name: test_file
+              type: file_path
+              value: "tests/integration/enhanced-dispatch.test.ts"
+
+        implementation:
+          location: "mcpify/tests/integration/enhanced-dispatch.test.ts"
+          change_type: creation
+          details: |
+            Create integration tests:
+            ```typescript
+            describe('Enhanced Dispatch Integration', () => {
+              it('dispatches with model selection', async () => {
+                const result = await dispatch({
+                  agent: 'claude',
+                  task: 'Say hello',
+                  modelId: 'claude-sonnet-4-20250514'
+                });
+                expect(result.status).toBe('COMPLETED');
+                expect(result.modelUsed).toBe('claude-sonnet-4-20250514');
+              });
+
+              it('dispatches with workspace mode none', async () => {
+                const result = await dispatch({
+                  agent: 'claude',
+                  task: 'Generate a haiku',
+                  workspaceMode: 'none'
+                });
+                expect(result.workspace.type).toBe('empty');
+              });
+
+              it('dispatches with additional secrets', async () => {
+                const result = await dispatch({
+                  agent: 'claude',
+                  task: 'Echo MY_SECRET',
+                  additionalSecrets: { MY_SECRET: 'test123' }
+                });
+                expect(result.output).toContain('test123');
+              });
+
+              it('handles idempotent requests', async () => {
+                const key = randomUUID();
+                const first = await dispatch({
+                  agent: 'claude',
+                  task: 'Test',
+                  idempotencyKey: key
+                });
+                const second = await dispatch({
+                  agent: 'claude',
+                  task: 'Test',
+                  idempotencyKey: key
+                });
+                expect(first.runId).toBe(second.runId);
+                expect(second.idempotent).toBe(true);
+              });
+            });
+            ```
+
+        acceptance_criteria:
+          - "All new parameters tested in integration"
+          - "End-to-end flow verified"
+          - "Error handling tested"
+          - "Idempotency verified"
+
+        test_command: "npm test -- tests/integration/enhanced-dispatch.test.ts"
+
+        rollback:
+          strategy: file_delete
+          command: "rm tests/integration/enhanced-dispatch.test.ts"
+
+        resources:
+          estimated_minutes: 60
+          complexity: high
+
+        handoff:
+          next_task: T6.3
+          context: "Integration tests created, proceed to documentation"
+
+      # -------------------------------------------------------------------------
+      # T6.3: Update MCPify Documentation
+      # -------------------------------------------------------------------------
+      - task_id: T6.3
+        name: "Update MCPify documentation"
+        status: pending
+        priority: high
+
+        description: |
+          Update MCPify README and API documentation with all new parameters
+          and usage examples.
+
+        dependencies:
+          - T6.2
+
+        interface:
+          inputs:
+            - name: readme_file
+              type: file_path
+              value: "README.md"
+          outputs:
+            - name: updated_readme
+              type: file_path
+              value: "README.md"
+
+        implementation:
+          location: "mcpify/README.md"
+          change_type: modification
+          details: |
+            Add comprehensive documentation for new parameters:
+            - modelId with available models per agent
+            - workspaceMode with use cases
+            - additionalSecrets with security notes
+            - idempotencyKey with retry examples
+            - tags with filtering examples
+            - constraints with resource limits
+
+        acceptance_criteria:
+          - "All new parameters documented"
+          - "Usage examples provided"
+          - "Security considerations noted"
+          - "Model registry documented"
+
+        test_command: "npm run docs:validate"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- README.md"
+
+        resources:
+          estimated_minutes: 30
+          complexity: low
+
+        handoff:
+          next_task: T6.4
+          context: "Documentation updated, proceed to validation"
+
+      # -------------------------------------------------------------------------
+      # T6.4: Final Validation and Smoke Tests
+      # -------------------------------------------------------------------------
+      - task_id: T6.4
+        name: "Run final validation and smoke tests"
+        status: pending
+        priority: critical
+
+        description: |
+          Run comprehensive validation ensuring all enhancements work correctly
+          in production-like environment.
+
+        dependencies:
+          - T6.3
+
+        interface:
+          inputs: []
+          outputs:
+            - name: validation_report
+              type: file_path
+              value: "validation/enhancement-validation.json"
+
+        implementation:
+          location: "scripts/validate-enhancements.ts"
+          change_type: execution
+          details: |
+            Run validation script that:
+            1. Dispatches with each new parameter
+            2. Verifies model selection works
+            3. Verifies workspace modes work
+            4. Verifies secret injection works
+            5. Verifies idempotency works
+            6. Verifies tagging works
+            7. Verifies constraints work
+            8. Generates validation report
+
+        acceptance_criteria:
+          - "All smoke tests pass"
+          - "No regressions in existing functionality"
+          - "Performance within acceptable limits"
+          - "Validation report generated"
+
+        test_command: "npm run validate:enhancements"
+
+        rollback:
+          strategy: none
+          command: "N/A - validation only"
+
+        resources:
+          estimated_minutes: 30
+          complexity: low
+
+        handoff:
+          next_task: null
+          context: "Blueprint complete - all enhancements validated"
+
+# =============================================================================
+# VERIFICATION & COMPLETION
+# =============================================================================
+
+verification:
+  automated_checks:
+    - name: "Schema validation"
+      command: "npm test -- --grep 'schema'"
+      expected_result: "All tests pass"
+
+    - name: "Integration tests"
+      command: "npm test -- --grep 'integration'"
+      expected_result: "All tests pass"
+
+    - name: "Type checking"
+      command: "npm run typecheck"
+      expected_result: "No type errors"
+
+    - name: "Lint"
+      command: "npm run lint"
+      expected_result: "No lint errors"
+
+  manual_checks:
+    - name: "Model selection works"
+      procedure: "Dispatch with modelId='balanced' and verify correct model used"
+
+    - name: "Skip clone works"
+      procedure: "Dispatch with workspaceMode='none' and verify fast execution"
+
+    - name: "Secrets injection works"
+      procedure: "Dispatch with additionalSecrets and verify environment"
+
+completion:
+  success_criteria:
+    - "All 35 tasks completed successfully"
+    - "Test coverage >= 80%"
+    - "No type errors"
+    - "Documentation updated"
+    - "Validation report shows all checks passing"
+
+  deliverables:
+    - "Updated MCPify dispatch schema"
+    - "Updated MCPify dispatch tool"
+    - "Updated Outpost control plane"
+    - "Model registry and validation"
+    - "Workspace mode implementation"
+    - "Secret injection enhancement"
+    - "Advanced control features"
+    - "Comprehensive tests"
+    - "Updated documentation"
+
+  estimated_effort:
+    tasks: 35
+    tiers: 7
+    complexity: high
+
+# =============================================================================
+# SUMMARY
+# =============================================================================
+#
+# Blueprint: MCPIFY_DISPATCH_ENHANCEMENT
+# Purpose: Expose full Outpost dispatch capabilities through MCPify MCP server
+#
+# Tiers:
+#   T0: Schema Foundation (8 tasks) - Extend Zod schemas
+#   T1: MCP Tool Interface (4 tasks) - Update tool definition
+#   T2: Model Selection (4 tasks) - Implement model registry and validation
+#   T3: Workspace Control (4 tasks) - Implement workspace modes
+#   T4: Credential Injection (4 tasks) - Implement additionalSecrets
+#   T5: Advanced Controls (4 tasks) - Idempotency, tags, constraints
+#   T6: Testing & Validation (4 tasks) - Comprehensive testing
+#
+# Total Tasks: 32
+# Depth: 5 (Enterprise - Maximum Granularity)
+# BSF Version: 2.1.0
+#
+# Key Enhancements:
+#   - modelId: Select specific models (claude-opus, claude-sonnet, etc.)
+#   - workspaceMode: Control repo cloning (full/minimal/none)
+#   - additionalSecrets: Inject custom environment variables
+#   - idempotencyKey: Prevent duplicate task execution
+#   - tags: Metadata for filtering and categorization
+#   - constraints: Resource limits (memory, CPU, disk)
+#   - Extended timeout: 86400s (24 hours) max
+#   - Extended task length: 50000 characters max
+#
+# =============================================================================

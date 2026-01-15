@@ -1,0 +1,28 @@
+{
+  "name": "dispatch-callback",
+  "version": "1.0.0",
+  "description": "Lambda function to handle ECS task state changes and update dispatch status",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "package": "npm run build && cp package.json dist/ && cd dist && zip -r ../function.zip .",
+    "clean": "rm -rf dist function.zip"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cloudwatch": "^3.700.0",
+    "@aws-sdk/client-dynamodb": "^3.700.0",
+    "@aws-sdk/lib-dynamodb": "^3.700.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.145",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -21,3 +21,19 @@ output "jobs_table_name" {
 output "audit_table_name" {
   value = aws_dynamodb_table.audit.name
 }
+
+output "api_keys_table_arn" {
+  value = aws_dynamodb_table.api_keys.arn
+}
+
+output "api_keys_table_name" {
+  value = aws_dynamodb_table.api_keys.name
+}
+
+output "dispatches_table_arn" {
+  value = aws_dynamodb_table.dispatches.arn
+}
+
+output "dispatches_table_name" {
+  value = aws_dynamodb_table.dispatches.name
+}

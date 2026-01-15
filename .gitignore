@@ -1,1 +1,18 @@
 .aider*
+
+# Performance test results (keep .gitkeep)
+tests/performance/results/*.json
+
+# Security tests
+tests/security/node_modules/
+tests/security/coverage/
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# Lambda deployment artifacts
+infrastructure/lambda/**/node_modules/
+infrastructure/lambda/**/function.zip

@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://outpost.zeroechelon.com/schemas/dispatch.schema.json",
+  "title": "outpost_dispatch",
+  "description": "Dispatch a task to an Outpost agent for execution. The agent executes the task in an isolated workspace with full repository context.",
+  "type": "object",
+  "properties": {
+    "user_id": {
+      "type": "string",
+      "description": "Commander user identifier for attribution and access control",
+      "minLength": 1
+    },
+    "repo": {
+      "type": "string",
+      "description": "GitHub repository in owner/repo format",
+      "pattern": "^[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+$"
+    },
+    "task": {
+      "type": "string",
+      "description": "Task description for the agent to execute",
+      "minLength": 10,
+      "maxLength": 5000
+    },
+    "agent": {
+      "type": "string",
+      "description": "The Outpost agent to use for execution",
+      "enum": ["claude", "codex", "gemini", "aider", "grok"]
+    },
+    "model": {
+      "type": "string",
+      "description": "Specific model ID override (e.g., claude-opus-4-5-20251101, gpt-5.2-codex). If not specified, uses the agent's default model.",
+      "minLength": 1
+    },
+    "workspace_mode": {
+      "type": "string",
+      "description": "Workspace lifecycle mode. Ephemeral workspaces are destroyed after execution; persistent workspaces retain state across runs.",
+      "enum": ["ephemeral", "persistent"],
+      "default": "ephemeral"
+    },
+    "timeout_seconds": {
+      "type": "number",
+      "description": "Execution timeout in seconds",
+      "minimum": 1,
+      "maximum": 3600,
+      "default": 600
+    },
+    "secrets": {
+      "type": "array",
+      "description": "Array of secret key names to inject into the agent's execution environment",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "context_level": {
+      "type": "string",
+      "description": "Context injection level controlling how much repository context is provided to the agent",
+      "enum": ["minimal", "standard", "full"]
+    }
+  },
+  "required": ["user_id", "task", "agent"],
+  "additionalProperties": false
+}

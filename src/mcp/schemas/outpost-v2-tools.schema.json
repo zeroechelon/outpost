@@ -1,0 +1,689 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://outpost.zeroechelon.com/schemas/v2/outpost-v2-tools.schema.json",
+  "title": "Outpost V2 MCP Tools",
+  "description": "Consolidated schema definitions for all Outpost V2 MCP tools",
+  "version": "2.0.0",
+  "definitions": {
+    "AgentType": {
+      "type": "string",
+      "enum": ["claude", "codex", "gemini", "aider", "grok"],
+      "description": "Available Outpost agent types"
+    },
+    "ExecutionStatus": {
+      "type": "string",
+      "enum": ["pending", "running", "completed", "failed", "timeout", "cancelled"],
+      "description": "Current state of dispatch execution"
+    },
+    "WorkspaceMode": {
+      "type": "string",
+      "enum": ["ephemeral", "persistent"],
+      "description": "Workspace lifecycle mode"
+    },
+    "ContextLevel": {
+      "type": "string",
+      "enum": ["minimal", "standard", "full"],
+      "description": "Context injection level for agent execution"
+    },
+    "LogEntry": {
+      "type": "object",
+      "description": "Individual log entry from agent execution",
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of log entry"
+        },
+        "level": {
+          "type": "string",
+          "enum": ["debug", "info", "warn", "error"],
+          "description": "Log severity level"
+        },
+        "message": {
+          "type": "string",
+          "description": "Log message content"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["agent", "executor", "system"],
+          "description": "Origin of the log entry"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Sequential offset for pagination continuity"
+        }
+      },
+      "required": ["timestamp", "level", "message", "offset"],
+      "additionalProperties": false
+    },
+    "AgentMetrics": {
+      "type": "object",
+      "properties": {
+        "pool_size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of workers in the agent pool"
+        },
+        "active_dispatches": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of currently active dispatches for this agent"
+        },
+        "success_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Success rate as a decimal between 0 and 1"
+        },
+        "avg_duration_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Average dispatch duration in seconds"
+        }
+      },
+      "required": ["pool_size", "active_dispatches", "success_rate", "avg_duration_seconds"],
+      "additionalProperties": false
+    },
+    "SystemMetrics": {
+      "type": "object",
+      "properties": {
+        "cpu_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "CPU utilization percentage"
+        },
+        "memory_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Memory utilization percentage"
+        }
+      },
+      "required": ["cpu_percent", "memory_percent"],
+      "additionalProperties": false
+    },
+    "WorkspaceInfo": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique workspace identifier"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of workspace creation"
+        },
+        "last_accessed": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of last workspace access"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total size of workspace in bytes"
+        },
+        "repo": {
+          "type": "string",
+          "description": "GitHub repository in owner/repo format"
+        }
+      },
+      "required": ["id", "created_at", "last_accessed", "size_bytes", "repo"],
+      "additionalProperties": false
+    },
+    "ArtifactInfo": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Artifact filename or identifier"
+        },
+        "type": {
+          "type": "string",
+          "description": "MIME type or artifact category (e.g., 'text/plain', 'application/json', 'patch', 'log')"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Size of the artifact in bytes"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Presigned S3 URL for artifact download"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when the presigned URL expires"
+        }
+      },
+      "required": ["name", "type", "size_bytes", "url", "expires_at"],
+      "additionalProperties": false
+    },
+    "ErrorInfo": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Error code identifier"
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable error description"
+        }
+      },
+      "required": ["code", "message"],
+      "additionalProperties": false
+    }
+  },
+  "tools": [
+    {
+      "name": "outpost_dispatch",
+      "description": "Dispatch a task to an Outpost agent for execution. The agent executes the task in an isolated workspace with full repository context.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "description": "Commander user identifier for attribution and access control",
+            "minLength": 1
+          },
+          "repo": {
+            "type": "string",
+            "description": "GitHub repository in owner/repo format",
+            "pattern": "^[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+$"
+          },
+          "task": {
+            "type": "string",
+            "description": "Task description for the agent to execute",
+            "minLength": 10,
+            "maxLength": 5000
+          },
+          "agent": {
+            "$ref": "#/definitions/AgentType"
+          },
+          "model": {
+            "type": "string",
+            "description": "Specific model ID override (e.g., claude-opus-4-5-20251101, gpt-5.2-codex). If not specified, uses the agent's default model.",
+            "minLength": 1
+          },
+          "workspace_mode": {
+            "$ref": "#/definitions/WorkspaceMode",
+            "default": "ephemeral"
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "description": "Execution timeout in seconds",
+            "minimum": 1,
+            "maximum": 3600,
+            "default": 600
+          },
+          "secrets": {
+            "type": "array",
+            "description": "Array of secret key names to inject into the agent's execution environment",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "context_level": {
+            "$ref": "#/definitions/ContextLevel"
+          }
+        },
+        "required": ["user_id", "task", "agent"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "dispatch_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier for the dispatch"
+          },
+          "status": {
+            "$ref": "#/definitions/ExecutionStatus"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable status message"
+          }
+        },
+        "required": ["dispatch_id", "status", "message"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "input": {
+            "user_id": "commander-richie",
+            "repo": "rgsuarez/outpost",
+            "task": "Add unit tests for the workspace manager module",
+            "agent": "claude",
+            "workspace_mode": "ephemeral",
+            "timeout_seconds": 600
+          },
+          "output": {
+            "dispatch_id": "550e8400-e29b-41d4-a716-446655440000",
+            "status": "pending",
+            "message": "Dispatch accepted and queued for execution"
+          }
+        }
+      ]
+    },
+    {
+      "name": "outpost_status",
+      "description": "Query the status of a dispatch execution with optional streaming log support for real-time monitoring.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dispatch_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier of the dispatch to query status for"
+          },
+          "include_logs": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether to include execution logs in response"
+          },
+          "log_offset": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Starting offset for log pagination. Use next_log_offset from previous response for streaming continuation"
+          }
+        },
+        "required": ["dispatch_id"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "dispatch_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Echo of the queried dispatch identifier"
+          },
+          "status": {
+            "$ref": "#/definitions/ExecutionStatus"
+          },
+          "progress": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Execution progress as percentage (0-100)"
+          },
+          "agent": {
+            "$ref": "#/definitions/AgentType"
+          },
+          "started_at": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when execution started, null if pending"
+          },
+          "ended_at": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when execution ended, null if still running"
+          },
+          "logs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/LogEntry"
+            },
+            "description": "Array of log entries, empty if include_logs is false"
+          },
+          "next_log_offset": {
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "description": "Continuation token for streaming. Pass as log_offset in next request. Null if no more logs available"
+          },
+          "has_more_logs": {
+            "type": "boolean",
+            "description": "Indicates if additional logs are available beyond current response"
+          },
+          "error": {
+            "oneOf": [
+              { "$ref": "#/definitions/ErrorInfo" },
+              { "type": "null" }
+            ],
+            "description": "Error details if status is 'failed', null otherwise"
+          }
+        },
+        "required": ["dispatch_id", "status", "progress", "agent", "started_at", "ended_at", "logs", "next_log_offset", "has_more_logs"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "input": {
+            "dispatch_id": "550e8400-e29b-41d4-a716-446655440000",
+            "include_logs": true,
+            "log_offset": 0
+          },
+          "output": {
+            "dispatch_id": "550e8400-e29b-41d4-a716-446655440000",
+            "status": "running",
+            "progress": 45,
+            "agent": "claude",
+            "started_at": "2026-01-12T10:30:00Z",
+            "ended_at": null,
+            "logs": [
+              {
+                "timestamp": "2026-01-12T10:30:01Z",
+                "level": "info",
+                "message": "Cloning repository rgsuarez/outpost",
+                "source": "executor",
+                "offset": 0
+              },
+              {
+                "timestamp": "2026-01-12T10:30:15Z",
+                "level": "info",
+                "message": "Repository cloned successfully",
+                "source": "executor",
+                "offset": 1
+              }
+            ],
+            "next_log_offset": 2,
+            "has_more_logs": true,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "outpost_health",
+      "description": "Check the health and availability of the Outpost system including per-agent metrics and system resource utilization.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "No input parameters required for health check"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["healthy", "degraded", "unhealthy"],
+            "description": "Overall health status of the Outpost system"
+          },
+          "agents": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/definitions/AgentMetrics"
+            },
+            "description": "Per-agent health metrics keyed by agent name"
+          },
+          "dispatches_last_hour": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total number of dispatches in the last hour"
+          },
+          "system": {
+            "$ref": "#/definitions/SystemMetrics",
+            "description": "System resource utilization metrics"
+          }
+        },
+        "required": ["status", "agents", "dispatches_last_hour", "system"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "input": {},
+          "output": {
+            "status": "healthy",
+            "agents": {
+              "claude": {
+                "pool_size": 3,
+                "active_dispatches": 1,
+                "success_rate": 0.95,
+                "avg_duration_seconds": 180.5
+              },
+              "codex": {
+                "pool_size": 2,
+                "active_dispatches": 0,
+                "success_rate": 0.88,
+                "avg_duration_seconds": 145.2
+              }
+            },
+            "dispatches_last_hour": 12,
+            "system": {
+              "cpu_percent": 35.5,
+              "memory_percent": 62.3
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "outpost_cancel",
+      "description": "Cancel a running or pending dispatch execution. Only dispatches in 'pending' or 'running' status can be cancelled.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dispatch_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier of the dispatch to cancel"
+          }
+        },
+        "required": ["dispatch_id"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether the cancellation was successful"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable result message"
+          }
+        },
+        "required": ["success", "message"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "input": {
+            "dispatch_id": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "output": {
+            "success": true,
+            "message": "Dispatch 550e8400-e29b-41d4-a716-446655440000 cancelled successfully"
+          }
+        },
+        {
+          "input": {
+            "dispatch_id": "660e8400-e29b-41d4-a716-446655440001"
+          },
+          "output": {
+            "success": false,
+            "message": "Cannot cancel dispatch: status is 'completed'"
+          }
+        }
+      ]
+    },
+    {
+      "name": "outpost_list_workspaces",
+      "description": "List all workspaces for a user with metadata including size, repository, and access timestamps.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "description": "Unique identifier for the user",
+            "minLength": 1
+          }
+        },
+        "required": ["user_id"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "workspaces": {
+            "type": "array",
+            "description": "Array of workspace objects with metadata",
+            "items": {
+              "$ref": "#/definitions/WorkspaceInfo"
+            }
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total number of workspaces returned"
+          }
+        },
+        "required": ["workspaces", "count"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "input": {
+            "user_id": "commander-richie"
+          },
+          "output": {
+            "workspaces": [
+              {
+                "id": "ws-abc123",
+                "created_at": "2026-01-10T08:00:00Z",
+                "last_accessed": "2026-01-12T14:30:00Z",
+                "size_bytes": 52428800,
+                "repo": "rgsuarez/outpost"
+              },
+              {
+                "id": "ws-def456",
+                "created_at": "2026-01-11T09:15:00Z",
+                "last_accessed": "2026-01-11T16:45:00Z",
+                "size_bytes": 31457280,
+                "repo": "rgsuarez/zeos"
+              }
+            ],
+            "count": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "outpost_delete_workspace",
+      "description": "Delete a specific workspace by ID. Removes all associated files and artifacts from storage.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "description": "Unique identifier for the user",
+            "minLength": 1
+          },
+          "workspace_id": {
+            "type": "string",
+            "description": "Unique identifier for the workspace to delete",
+            "minLength": 1
+          }
+        },
+        "required": ["user_id", "workspace_id"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether the deletion was successful"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable result message"
+          }
+        },
+        "required": ["success", "message"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "input": {
+            "user_id": "commander-richie",
+            "workspace_id": "ws-abc123"
+          },
+          "output": {
+            "success": true,
+            "message": "Workspace ws-abc123 deleted successfully"
+          }
+        }
+      ]
+    },
+    {
+      "name": "outpost_get_artifacts",
+      "description": "Retrieve artifacts from a completed dispatch run with presigned S3 URLs for download.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dispatch_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "UUID of the dispatch run to retrieve artifacts from"
+          }
+        },
+        "required": ["dispatch_id"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "description": "Array of artifact objects with download URLs",
+            "items": {
+              "$ref": "#/definitions/ArtifactInfo"
+            }
+          },
+          "dispatch_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "UUID of the dispatch run these artifacts belong to"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total number of artifacts returned"
+          }
+        },
+        "required": ["artifacts", "dispatch_id", "count"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "input": {
+            "dispatch_id": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "output": {
+            "artifacts": [
+              {
+                "name": "output.patch",
+                "type": "patch",
+                "size_bytes": 4096,
+                "url": "https://outpost-artifacts.s3.amazonaws.com/550e8400/output.patch?X-Amz-Signature=...",
+                "expires_at": "2026-01-12T16:00:00Z"
+              },
+              {
+                "name": "execution.log",
+                "type": "log",
+                "size_bytes": 15360,
+                "url": "https://outpost-artifacts.s3.amazonaws.com/550e8400/execution.log?X-Amz-Signature=...",
+                "expires_at": "2026-01-12T16:00:00Z"
+              }
+            ],
+            "dispatch_id": "550e8400-e29b-41d4-a716-446655440000",
+            "count": 2
+          }
+        }
+      ]
+    }
+  ]
+}

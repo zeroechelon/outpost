@@ -1,0 +1,23 @@
+{
+  "extends": "../../src/control-plane/tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "./dist",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["../../src/control-plane/src/*"],
+      "@api/*": ["../../src/control-plane/src/api/*"],
+      "@services/*": ["../../src/control-plane/src/services/*"],
+      "@repositories/*": ["../../src/control-plane/src/repositories/*"],
+      "@models/*": ["../../src/control-plane/src/models/*"],
+      "@utils/*": ["../../src/control-plane/src/utils/*"],
+      "@types/*": ["../../src/control-plane/src/types/*"]
+    },
+    "typeRoots": [
+      "../../src/control-plane/node_modules/@types",
+      "./node_modules/@types"
+    ]
+  },
+  "include": ["./**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}
