@@ -12,3 +12,7 @@ tests/security/coverage/
 *.tfstate
 *.tfstate.*
 .terraform.lock.hcl
+
+# Lambda deployment artifacts
+infrastructure/lambda/**/node_modules/
+infrastructure/lambda/**/function.zip

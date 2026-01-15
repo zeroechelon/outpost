@@ -55,6 +55,7 @@ export interface PersistentWorkspace {
   readonly lastAccessedAt: Date;
   readonly sizeBytes: number;
   readonly repoUrl?: string;
+  readonly expiresAt?: number; // Unix timestamp (seconds) for DynamoDB TTL
 }
 
 /**
@@ -672,6 +673,45 @@ export class PersistentWorkspaceService {
   }
 
   /**
+   * Touch workspace to extend TTL (heartbeat operation)
+   *
+   * Called on each dispatch to keep active workspaces from expiring.
+   * Extends TTL by 30 days from current time.
+   *
+   * @param workspaceId - Workspace ID to touch
+   * @returns Updated PersistentWorkspace
+   * @throws NotFoundError if workspace not found
+   */
+  async touchWorkspace(workspaceId: string): Promise<PersistentWorkspace> {
+    this.logger.debug({ workspaceId }, 'Touching workspace to extend TTL');
+
+    try {
+      const record = await this.workspaceRepository.touchWorkspace(workspaceId);
+
+      this.logger.info(
+        {
+          workspaceId,
+          expiresAt: record.expiresAt,
+          expiresAtDate: record.expiresAt
+            ? new Date(record.expiresAt * 1000).toISOString()
+            : 'null',
+        },
+        'Workspace TTL extended successfully'
+      );
+
+      return this.recordToWorkspace(record);
+    } catch (error) {
+      if (error instanceof NotFoundError) {
+        throw error;
+      }
+      throw new InternalError(
+        `Failed to touch workspace: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        { workspaceId }
+      );
+    }
+  }
+
+  /**
    * Convert WorkspaceRecord to PersistentWorkspace
    */
   private recordToWorkspace(record: WorkspaceRecord): PersistentWorkspace {
@@ -685,12 +725,17 @@ export class PersistentWorkspaceService {
       sizeBytes: record.sizeBytes,
     };
 
-    // Only include repoUrl if defined (exactOptionalPropertyTypes compliance)
+    // Build result with optional fields (exactOptionalPropertyTypes compliance)
+    let result: PersistentWorkspace = base;
+
     if (record.repoUrl !== null) {
-      return { ...base, repoUrl: record.repoUrl };
+      result = { ...result, repoUrl: record.repoUrl };
+    }
+    if (record.expiresAt !== null) {
+      result = { ...result, expiresAt: record.expiresAt };
     }
 
-    return base;
+    return result;
   }
 }
 

@@ -17,6 +17,20 @@ import { getLogger } from '../utils/logger.js';
 import { NotFoundError, InternalError } from '../utils/errors.js';
 
 /**
+ * TTL configuration constants
+ */
+const TTL_DAYS = 30;
+const SECONDS_PER_DAY = 24 * 60 * 60;
+
+/**
+ * Calculate expires_at TTL value (Unix timestamp in seconds)
+ * DynamoDB TTL expects Unix epoch seconds, not milliseconds
+ */
+export function calculateExpiresAt(days: number = TTL_DAYS): number {
+  return Math.floor(Date.now() / 1000) + days * SECONDS_PER_DAY;
+}
+
+/**
  * Workspace record stored in DynamoDB
  */
 export interface WorkspaceRecord {
@@ -27,6 +41,7 @@ export interface WorkspaceRecord {
   readonly sizeBytes: number;
   readonly repoUrl: string | null;
   readonly efsAccessPointId: string | null;
+  readonly expiresAt: number | null; // Unix timestamp (seconds) for DynamoDB TTL
 }
 
 /**
@@ -57,6 +72,7 @@ interface WorkspaceDynamoItem {
   size_bytes: number;
   repo_url?: string;
   efs_access_point_id?: string;
+  expires_at?: number; // Unix timestamp for DynamoDB TTL
 }
 
 function toDynamoItem(record: WorkspaceRecord): WorkspaceDynamoItem {
@@ -74,6 +90,9 @@ function toDynamoItem(record: WorkspaceRecord): WorkspaceDynamoItem {
   if (record.efsAccessPointId !== null) {
     item.efs_access_point_id = record.efsAccessPointId;
   }
+  if (record.expiresAt !== null) {
+    item.expires_at = record.expiresAt;
+  }
 
   return item;
 }
@@ -87,6 +106,7 @@ function fromDynamoItem(item: Record<string, unknown>): WorkspaceRecord {
     sizeBytes: item['size_bytes'] as number,
     repoUrl: (item['repo_url'] as string) ?? null,
     efsAccessPointId: (item['efs_access_point_id'] as string) ?? null,
+    expiresAt: (item['expires_at'] as number) ?? null,
   };
 }
 
@@ -100,7 +120,7 @@ export class WorkspaceRepository {
   }
 
   /**
-   * Create a new workspace record
+   * Create a new workspace record with TTL set to 30 days from now
    */
   async create(input: CreateWorkspaceInput): Promise<WorkspaceRecord> {
     const docClient = getDocClient();
@@ -114,11 +134,12 @@ export class WorkspaceRepository {
       sizeBytes: 0,
       repoUrl: input.repoUrl ?? null,
       efsAccessPointId: input.efsAccessPointId ?? null,
+      expiresAt: calculateExpiresAt(), // TTL: 30 days from creation
     };
 
     this.logger.debug(
-      { workspaceId: record.workspaceId, userId: input.userId },
-      'Creating workspace'
+      { workspaceId: record.workspaceId, userId: input.userId, expiresAt: record.expiresAt },
+      'Creating workspace with TTL'
     );
 
     await docClient.send(
@@ -194,11 +215,18 @@ export class WorkspaceRepository {
   }
 
   /**
-   * Update last accessed timestamp
+   * Update last accessed timestamp and extend TTL
+   * This is the heartbeat/touch operation that keeps workspaces alive
    */
   async updateLastAccessed(userId: string, workspaceId: string): Promise<WorkspaceRecord> {
     const docClient = getDocClient();
     const now = new Date();
+    const newExpiresAt = calculateExpiresAt();
+
+    this.logger.debug(
+      { workspaceId, userId, newExpiresAt },
+      'Updating last accessed and extending TTL'
+    );
 
     const result = await docClient.send(
       new UpdateCommand({
@@ -207,9 +235,10 @@ export class WorkspaceRepository {
           user_id: userId,
           workspace_id: workspaceId,
         },
-        UpdateExpression: 'SET last_accessed_at = :lastAccessedAt',
+        UpdateExpression: 'SET last_accessed_at = :lastAccessedAt, expires_at = :expiresAt',
         ExpressionAttributeValues: {
           ':lastAccessedAt': now.toISOString(),
+          ':expiresAt': newExpiresAt,
         },
         ConditionExpression: 'attribute_exists(user_id) AND attribute_exists(workspace_id)',
         ReturnValues: 'ALL_NEW',
@@ -219,6 +248,52 @@ export class WorkspaceRepository {
     if (result.Attributes === undefined) {
       throw new NotFoundError(`Workspace not found: ${workspaceId} for user ${userId}`);
     }
+
+    return fromDynamoItem(result.Attributes);
+  }
+
+  /**
+   * Touch workspace to extend TTL (heartbeat operation)
+   * Alias for updateLastAccessed - extends TTL by 30 days from now
+   *
+   * @param workspaceId - Workspace ID to touch
+   * @returns Updated workspace record
+   * @throws NotFoundError if workspace not found
+   */
+  async touchWorkspace(workspaceId: string): Promise<WorkspaceRecord> {
+    const docClient = getDocClient();
+    const now = new Date();
+    const newExpiresAt = calculateExpiresAt();
+
+    this.logger.debug(
+      { workspaceId, newExpiresAt },
+      'Touching workspace - extending TTL'
+    );
+
+    const result = await docClient.send(
+      new UpdateCommand({
+        TableName: this.tableName,
+        Key: {
+          workspace_id: workspaceId,
+        },
+        UpdateExpression: 'SET last_accessed_at = :lastAccessedAt, expires_at = :expiresAt',
+        ExpressionAttributeValues: {
+          ':lastAccessedAt': now.toISOString(),
+          ':expiresAt': newExpiresAt,
+        },
+        ConditionExpression: 'attribute_exists(workspace_id)',
+        ReturnValues: 'ALL_NEW',
+      })
+    );
+
+    if (result.Attributes === undefined) {
+      throw new NotFoundError(`Workspace not found: ${workspaceId}`);
+    }
+
+    this.logger.info(
+      { workspaceId, expiresAt: newExpiresAt, expiresAtDate: new Date(newExpiresAt * 1000).toISOString() },
+      'Workspace TTL extended successfully'
+    );
 
     return fromDynamoItem(result.Attributes);
   }
