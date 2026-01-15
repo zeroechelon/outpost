@@ -1,0 +1,2454 @@
+# =============================================================================
+# OUTPOST V2 STATUS CALLBACK BLUEPRINT
+# Blueprint Standard Format (BSF) v2.1.0
+# =============================================================================
+# Generated: 2026-01-15
+# Depth: 5 (Enterprise - Maximum Granularity)
+# Author: Claude Opus 4.5
+# Purpose: Implement ECS task completion callback to fix dispatch status tracking
+# =============================================================================
+
+---
+_blueprint_version: "2.1.0"
+_generated_at: "2026-01-15T14:30:00Z"
+_generator: "claude-opus-4.5"
+_checksum: null
+---
+
+metadata:
+  blueprint_id: OUTPOST_V2_STATUS_CALLBACK
+  version: "1.0.0"
+  bsf_version: "2.1.0"
+  depth: 5
+  created: "2026-01-15T14:30:00Z"
+  author: "Claude Opus 4.5"
+  status: deployed
+
+  tags:
+    - outpost
+    - ecs
+    - eventbridge
+    - lambda
+    - status-callback
+    - v2-finalization
+
+  description: |
+    Implement ECS task completion status callback mechanism to fix dispatch status
+    tracking in Outpost v2. Currently, dispatches remain stuck in RUNNING status
+    because no callback updates DynamoDB when ECS tasks complete. This blueprint
+    implements EventBridge → Lambda → DynamoDB callback, fixes E2E tests, and
+    cleans up zombie dispatch records.
+
+# =============================================================================
+# PROBLEM STATEMENT
+# =============================================================================
+
+problem_statement:
+  summary: |
+    Outpost v2 dispatches remain stuck in RUNNING status forever because there is
+    no mechanism to update DynamoDB when ECS agent tasks complete. Agents execute
+    successfully (CloudWatch logs prove output) but clients never see COMPLETED.
+
+  root_causes:
+    - id: RC1
+      description: "No callback from ECS task completion to control plane"
+      severity: CRITICAL
+      evidence: "80 dispatches stuck in RUNNING, all ECS tasks show MISSING"
+
+    - id: RC2
+      description: "MCPify E2E tests use deprecated SSM mode instead of HTTP"
+      severity: HIGH
+      evidence: "Tests target mi-0bbd8fed3f0650ddb (deprecated per CLAUDE.md)"
+
+    - id: RC3
+      description: "152 zombie dispatch records in DynamoDB"
+      severity: MEDIUM
+      evidence: "80 RUNNING + 72 PENDING records with terminated ECS tasks"
+
+  current_architecture:
+    flow: |
+      1. MCP client calls dispatch via HTTP
+      2. Control plane launches ECS task
+      3. ECS task runs agent, produces output to CloudWatch
+      4. ECS task stops and is deregistered
+      5. [MISSING] No callback to control plane
+      6. DynamoDB dispatch record stays RUNNING forever
+      7. Client polls and never sees COMPLETED
+
+  target_architecture:
+    flow: |
+      1. MCP client calls dispatch via HTTP
+      2. Control plane launches ECS task
+      3. ECS task runs agent, produces output to CloudWatch
+      4. ECS task stops
+      5. [NEW] EventBridge captures Task State Change event
+      6. [NEW] Lambda updates DynamoDB with final status
+      7. Client polls and sees COMPLETED/FAILED
+
+  success_criteria:
+    - "Dispatches transition to COMPLETED/FAILED within 60s of task termination"
+    - "E2E tests pass using HTTP control plane (not SSM)"
+    - "Zero zombie dispatches in RUNNING state"
+    - "Fleet agents 100% operational for production use"
+
+# =============================================================================
+# EXECUTION CONFIGURATION
+# =============================================================================
+
+execution:
+  shell: bash
+  shell_flags: ["-e", "-o", "pipefail"]
+  max_parallel_tasks: 4
+
+  resource_locks:
+    - name: "dynamodb-dispatches"
+      mode: exclusive
+    - name: "terraform-state"
+      mode: exclusive
+
+  preflight_checks:
+    - command: "aws sts get-caller-identity --profile soc"
+      expected_exit_code: 0
+      error_message: "AWS soc profile not configured"
+    - command: "terraform --version"
+      expected_exit_code: 0
+      error_message: "Terraform not installed"
+    - command: "node --version"
+      expected_exit_code: 0
+      error_message: "Node.js not installed"
+
+  secret_resolution:
+    on_missing: abort
+    sources:
+      - type: env
+        prefix: ""
+      - type: file
+        path: "~/.zeos/tokens"
+
+  retry_policy:
+    max_retries: 2
+    backoff_strategy: exponential
+    initial_delay_ms: 1000
+
+  timeout:
+    task_default_seconds: 300
+    tier_max_seconds: 1800
+    blueprint_max_seconds: 14400
+
+  validation:
+    require_tests: true
+    require_rollback: true
+    fail_fast: true
+
+# =============================================================================
+# TIER 0: E2E TEST MIGRATION
+# Fix MCPify E2E tests to use HTTP control plane
+# =============================================================================
+
+tiers:
+  - tier_id: T0
+    name: "E2E Test Migration"
+    description: "Migrate MCPify E2E tests from deprecated SSM mode to HTTP control plane"
+    parallel: true
+
+    tasks:
+      # -------------------------------------------------------------------------
+      # T0.1: Audit Current E2E Test Configuration
+      # -------------------------------------------------------------------------
+      - task_id: T0.1
+        name: "Audit E2E test configuration"
+        status: pending
+        priority: high
+
+        description: |
+          Analyze current E2E test setup to identify all SSM references that need
+          migration to HTTP mode.
+
+        dependencies: []
+
+        interface:
+          inputs:
+            - name: test_setup
+              type: file_path
+              value: "tests/integration/setup.ts"
+          outputs:
+            - name: audit_report
+              type: object
+              schema:
+                ssm_references: array
+                http_references: array
+                files_to_modify: array
+
+        implementation:
+          location: "~/projects/mcpify/tests/integration/"
+          change_type: analysis
+          details: |
+            1. Search for SSM instance references (mi-0bbd8fed3f0650ddb)
+            2. Search for OUTPOST_SSM_INSTANCE environment variables
+            3. Identify test files that need HTTP migration
+            4. Document current dispatch mechanism
+
+        acceptance_criteria:
+          - "All SSM references identified"
+          - "Migration scope documented"
+          - "No hidden SSM dependencies"
+
+        test_command: "grep -r 'SSM\\|mi-0' tests/"
+
+        rollback:
+          strategy: none
+          command: "N/A - analysis only"
+
+        resources:
+          estimated_minutes: 10
+          complexity: low
+
+        handoff:
+          next_task: T0.2
+          context: "SSM references identified, proceed to setup.ts migration"
+
+      # -------------------------------------------------------------------------
+      # T0.2: Update Test Setup for HTTP Mode
+      # -------------------------------------------------------------------------
+      - task_id: T0.2
+        name: "Update test setup for HTTP mode"
+        status: pending
+        priority: critical
+
+        description: |
+          Modify tests/integration/setup.ts to use HTTP control plane endpoint
+          instead of SSM instance.
+
+        dependencies:
+          - T0.1
+
+        interface:
+          inputs:
+            - name: setup_file
+              type: file_path
+              value: "tests/integration/setup.ts"
+          outputs:
+            - name: updated_setup
+              type: file_path
+              value: "tests/integration/setup.ts"
+
+        implementation:
+          location: "~/projects/mcpify/tests/integration/setup.ts"
+          change_type: modification
+          details: |
+            1. Replace SSM instance ID with HTTP endpoint:
+               - Remove: OUTPOST_SSM_INSTANCE = 'mi-0bbd8fed3f0650ddb'
+               - Add: OUTPOST_API_URL = process.env.OUTPOST_API_URL ||
+                      'http://outpost-control-plane-dev-140603164.us-east-1.elb.amazonaws.com'
+
+            2. Update context creation to use HTTP client:
+               - Import OutpostHttpClient
+               - Replace SSM dispatch with HTTP dispatch
+               - Update status polling to use HTTP GET /dispatches/:id
+
+            3. Add API key configuration:
+               - OUTPOST_API_KEY from environment or .env file
+
+        acceptance_criteria:
+          - "No SSM references in setup.ts"
+          - "HTTP endpoint configurable via environment"
+          - "API key authentication supported"
+          - "Tests can run without SSM permissions"
+
+        test_command: "npx tsc --noEmit tests/integration/setup.ts"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- tests/integration/setup.ts"
+
+        resources:
+          estimated_minutes: 30
+          complexity: medium
+
+        handoff:
+          next_task: T0.3
+          context: "Setup migrated, proceed to multi-agent test update"
+
+      # -------------------------------------------------------------------------
+      # T0.3: Update Multi-Agent E2E Test
+      # -------------------------------------------------------------------------
+      - task_id: T0.3
+        name: "Update multi-agent E2E test"
+        status: pending
+        priority: critical
+
+        description: |
+          Update multi-agent.e2e.test.ts to use HTTP dispatch mechanism.
+
+        dependencies:
+          - T0.2
+
+        interface:
+          inputs:
+            - name: test_file
+              type: file_path
+              value: "tests/integration/multi-agent.e2e.test.ts"
+          outputs:
+            - name: updated_test
+              type: file_path
+              value: "tests/integration/multi-agent.e2e.test.ts"
+
+        implementation:
+          location: "~/projects/mcpify/tests/integration/multi-agent.e2e.test.ts"
+          change_type: modification
+          details: |
+            1. Update dispatch calls to use HTTP client:
+               ```typescript
+               const response = await fetch(`${OUTPOST_API_URL}/api/v1/dispatches`, {
+                 method: 'POST',
+                 headers: {
+                   'Content-Type': 'application/json',
+                   'Authorization': `Bearer ${OUTPOST_API_KEY}`
+                 },
+                 body: JSON.stringify({ agent, task, repo, timeoutSeconds })
+               });
+               ```
+
+            2. Update status polling:
+               ```typescript
+               const status = await fetch(`${OUTPOST_API_URL}/api/v1/dispatches/${dispatchId}`);
+               ```
+
+            3. Update timeout handling for HTTP latency
+
+        acceptance_criteria:
+          - "Test dispatches via HTTP, not SSM"
+          - "Status polling uses HTTP GET"
+          - "Authentication header included"
+          - "Test passes with live control plane"
+
+        test_command: "npx vitest run tests/integration/multi-agent.e2e.test.ts --reporter=verbose"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- tests/integration/multi-agent.e2e.test.ts"
+
+        resources:
+          estimated_minutes: 30
+          complexity: medium
+
+        handoff:
+          next_task: T0.4
+          context: "Multi-agent test updated, proceed to other E2E tests"
+
+      # -------------------------------------------------------------------------
+      # T0.4: Update All Remaining E2E Tests
+      # -------------------------------------------------------------------------
+      - task_id: T0.4
+        name: "Update remaining E2E tests"
+        status: pending
+        priority: high
+
+        description: |
+          Update all other E2E tests to use HTTP mode consistently.
+
+        dependencies:
+          - T0.2
+
+        interface:
+          inputs:
+            - name: test_files
+              type: file_list
+              value:
+                - "tests/integration/dispatch.e2e.test.ts"
+                - "tests/e2e/dispatch-features.e2e.test.ts"
+          outputs:
+            - name: updated_tests
+              type: file_list
+
+        implementation:
+          location: "~/projects/mcpify/tests/"
+          change_type: modification
+          details: |
+            Apply same HTTP migration pattern to:
+            - dispatch.e2e.test.ts
+            - dispatch-features.e2e.test.ts
+            - Any other files using SSM dispatch
+
+        acceptance_criteria:
+          - "All E2E tests use HTTP mode"
+          - "Zero SSM references in test directory"
+          - "Tests pass with TypeScript compilation"
+
+        test_command: "grep -r 'SSM\\|mi-0' tests/ && exit 1 || exit 0"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- tests/"
+
+        resources:
+          estimated_minutes: 20
+          complexity: low
+
+        handoff:
+          next_task: T0.5
+          context: "All E2E tests migrated, proceed to verification"
+
+      # -------------------------------------------------------------------------
+      # T0.5: Verify E2E Test Suite Compiles
+      # -------------------------------------------------------------------------
+      - task_id: T0.5
+        name: "Verify E2E test compilation"
+        status: pending
+        priority: high
+
+        description: |
+          Verify all E2E tests compile and pass basic validation.
+
+        dependencies:
+          - T0.3
+          - T0.4
+
+        interface:
+          inputs: []
+          outputs:
+            - name: compilation_result
+              type: boolean
+
+        implementation:
+          location: "~/projects/mcpify/"
+          change_type: verification
+          details: |
+            1. Run TypeScript compilation: npx tsc --noEmit
+            2. Run linter: npm run lint tests/
+            3. Verify no SSM imports remain
+
+        acceptance_criteria:
+          - "TypeScript compilation succeeds"
+          - "No type errors"
+          - "Lint passes"
+
+        test_command: "cd ~/projects/mcpify && npx tsc --noEmit && npm run lint tests/"
+
+        rollback:
+          strategy: none
+          command: "N/A - verification only"
+
+        resources:
+          estimated_minutes: 5
+          complexity: low
+
+        handoff:
+          next_task: T1.1
+          context: "E2E tests migrated and verified, proceed to infrastructure"
+
+# =============================================================================
+# TIER 1: EVENTBRIDGE INFRASTRUCTURE
+# Create EventBridge rule to capture ECS task state changes
+# =============================================================================
+
+  - tier_id: T1
+    name: "EventBridge Infrastructure"
+    description: "Create EventBridge rule and targets for ECS task completion events"
+    parallel: false
+
+    tasks:
+      # -------------------------------------------------------------------------
+      # T1.1: Create Terraform Module for EventBridge Rule
+      # -------------------------------------------------------------------------
+      - task_id: T1.1
+        name: "Create EventBridge Terraform module"
+        status: pending
+        priority: critical
+
+        description: |
+          Create Terraform module for EventBridge rule that captures ECS task
+          state changes in the outpost-dev cluster.
+
+        dependencies:
+          - T0.5
+
+        interface:
+          inputs: []
+          outputs:
+            - name: module_dir
+              type: directory
+              value: "infrastructure/terraform/modules/dispatch-callback/"
+
+        implementation:
+          location: "~/projects/outpost/infrastructure/terraform/modules/dispatch-callback/"
+          change_type: creation
+          details: |
+            Create module structure:
+            ```
+            dispatch-callback/
+            ├── main.tf           # EventBridge rule + targets
+            ├── variables.tf      # Input variables
+            ├── outputs.tf        # Rule ARN, Lambda ARN
+            └── iam.tf           # IAM roles and policies
+            ```
+
+            EventBridge Rule Pattern:
+            ```hcl
+            resource "aws_cloudwatch_event_rule" "ecs_task_state_change" {
+              name        = "outpost-dispatch-completion"
+              description = "Capture ECS task completion for dispatch status updates"
+
+              event_pattern = jsonencode({
+                source      = ["aws.ecs"]
+                detail-type = ["ECS Task State Change"]
+                detail = {
+                  clusterArn = [var.cluster_arn]
+                  lastStatus = ["STOPPED"]
+                  group      = [{ prefix = "family:outpost-agent-" }]
+                }
+              })
+            }
+            ```
+
+        acceptance_criteria:
+          - "Module creates EventBridge rule"
+          - "Rule filters for outpost-dev cluster"
+          - "Rule filters for STOPPED status only"
+          - "Rule filters for agent task families"
+
+        test_command: "terraform validate"
+
+        rollback:
+          strategy: terraform_destroy
+          command: "terraform destroy -target=module.dispatch_callback"
+
+        resources:
+          estimated_minutes: 30
+          complexity: medium
+
+        handoff:
+          next_task: T1.2
+          context: "EventBridge module created, proceed to IAM configuration"
+
+      # -------------------------------------------------------------------------
+      # T1.2: Create IAM Role for Lambda
+      # -------------------------------------------------------------------------
+      - task_id: T1.2
+        name: "Create Lambda IAM role"
+        status: pending
+        priority: critical
+
+        description: |
+          Create IAM role and policies for the dispatch completion Lambda function.
+
+        dependencies:
+          - T1.1
+
+        interface:
+          inputs:
+            - name: module_dir
+              type: directory
+              value: "infrastructure/terraform/modules/dispatch-callback/"
+          outputs:
+            - name: iam_file
+              type: file_path
+              value: "infrastructure/terraform/modules/dispatch-callback/iam.tf"
+
+        implementation:
+          location: "~/projects/outpost/infrastructure/terraform/modules/dispatch-callback/iam.tf"
+          change_type: creation
+          details: |
+            ```hcl
+            # Lambda execution role
+            resource "aws_iam_role" "dispatch_callback_lambda" {
+              name = "outpost-dispatch-callback-lambda"
+
+              assume_role_policy = jsonencode({
+                Version = "2012-10-17"
+                Statement = [{
+                  Action = "sts:AssumeRole"
+                  Effect = "Allow"
+                  Principal = {
+                    Service = "lambda.amazonaws.com"
+                  }
+                }]
+              })
+            }
+
+            # DynamoDB access policy
+            resource "aws_iam_role_policy" "dynamodb_access" {
+              name = "dynamodb-dispatch-access"
+              role = aws_iam_role.dispatch_callback_lambda.id
+
+              policy = jsonencode({
+                Version = "2012-10-17"
+                Statement = [
+                  {
+                    Effect = "Allow"
+                    Action = [
+                      "dynamodb:UpdateItem",
+                      "dynamodb:GetItem",
+                      "dynamodb:Query"
+                    ]
+                    Resource = [
+                      var.dispatches_table_arn,
+                      "${var.dispatches_table_arn}/index/*"
+                    ]
+                  }
+                ]
+              })
+            }
+
+            # CloudWatch Logs policy
+            resource "aws_iam_role_policy_attachment" "lambda_logs" {
+              role       = aws_iam_role.dispatch_callback_lambda.name
+              policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+            }
+
+            # ECS describe tasks policy (for exit code extraction)
+            resource "aws_iam_role_policy" "ecs_describe" {
+              name = "ecs-describe-tasks"
+              role = aws_iam_role.dispatch_callback_lambda.id
+
+              policy = jsonencode({
+                Version = "2012-10-17"
+                Statement = [{
+                  Effect   = "Allow"
+                  Action   = ["ecs:DescribeTasks"]
+                  Resource = "*"
+                  Condition = {
+                    StringEquals = {
+                      "ecs:cluster" = var.cluster_arn
+                    }
+                  }
+                }]
+              })
+            }
+            ```
+
+        acceptance_criteria:
+          - "IAM role allows Lambda to assume"
+          - "DynamoDB UpdateItem permission granted"
+          - "CloudWatch Logs permission granted"
+          - "ECS DescribeTasks permission granted"
+          - "Least privilege principles followed"
+
+        test_command: "terraform validate && terraform plan"
+
+        rollback:
+          strategy: terraform_destroy
+          command: "terraform destroy -target=aws_iam_role.dispatch_callback_lambda"
+
+        resources:
+          estimated_minutes: 20
+          complexity: medium
+
+        handoff:
+          next_task: T1.3
+          context: "IAM role created, proceed to Lambda resource"
+
+      # -------------------------------------------------------------------------
+      # T1.3: Create Lambda Function Resource
+      # -------------------------------------------------------------------------
+      - task_id: T1.3
+        name: "Create Lambda function Terraform resource"
+        status: pending
+        priority: critical
+
+        description: |
+          Add Lambda function resource to Terraform module.
+
+        dependencies:
+          - T1.2
+
+        interface:
+          inputs:
+            - name: module_dir
+              type: directory
+              value: "infrastructure/terraform/modules/dispatch-callback/"
+          outputs:
+            - name: main_tf
+              type: file_path
+              value: "infrastructure/terraform/modules/dispatch-callback/main.tf"
+
+        implementation:
+          location: "~/projects/outpost/infrastructure/terraform/modules/dispatch-callback/main.tf"
+          change_type: modification
+          details: |
+            Add Lambda function:
+            ```hcl
+            resource "aws_lambda_function" "dispatch_callback" {
+              function_name = "outpost-dispatch-callback"
+              role          = aws_iam_role.dispatch_callback_lambda.arn
+              handler       = "index.handler"
+              runtime       = "nodejs20.x"
+              timeout       = 30
+              memory_size   = 256
+
+              filename         = var.lambda_zip_path
+              source_code_hash = filebase64sha256(var.lambda_zip_path)
+
+              environment {
+                variables = {
+                  DISPATCHES_TABLE = var.dispatches_table_name
+                  LOG_LEVEL        = "INFO"
+                }
+              }
+
+              tags = {
+                Service = "outpost"
+                Purpose = "dispatch-status-callback"
+              }
+            }
+
+            # EventBridge target
+            resource "aws_cloudwatch_event_target" "lambda_target" {
+              rule      = aws_cloudwatch_event_rule.ecs_task_state_change.name
+              target_id = "dispatch-callback-lambda"
+              arn       = aws_lambda_function.dispatch_callback.arn
+            }
+
+            # Lambda permission for EventBridge
+            resource "aws_lambda_permission" "eventbridge_invoke" {
+              statement_id  = "AllowEventBridgeInvoke"
+              action        = "lambda:InvokeFunction"
+              function_name = aws_lambda_function.dispatch_callback.function_name
+              principal     = "events.amazonaws.com"
+              source_arn    = aws_cloudwatch_event_rule.ecs_task_state_change.arn
+            }
+            ```
+
+        acceptance_criteria:
+          - "Lambda function resource defined"
+          - "EventBridge target configured"
+          - "Lambda permission for EventBridge granted"
+          - "Environment variables for DynamoDB table"
+
+        test_command: "terraform validate"
+
+        rollback:
+          strategy: terraform_destroy
+          command: "terraform destroy -target=aws_lambda_function.dispatch_callback"
+
+        resources:
+          estimated_minutes: 20
+          complexity: medium
+
+        handoff:
+          next_task: T1.4
+          context: "Lambda resource created, proceed to module variables"
+
+      # -------------------------------------------------------------------------
+      # T1.4: Define Module Variables and Outputs
+      # -------------------------------------------------------------------------
+      - task_id: T1.4
+        name: "Define module variables and outputs"
+        status: pending
+        priority: high
+
+        description: |
+          Create variables.tf and outputs.tf for the dispatch-callback module.
+
+        dependencies:
+          - T1.3
+
+        interface:
+          inputs: []
+          outputs:
+            - name: variables_tf
+              type: file_path
+              value: "infrastructure/terraform/modules/dispatch-callback/variables.tf"
+            - name: outputs_tf
+              type: file_path
+              value: "infrastructure/terraform/modules/dispatch-callback/outputs.tf"
+
+        implementation:
+          location: "~/projects/outpost/infrastructure/terraform/modules/dispatch-callback/"
+          change_type: creation
+          details: |
+            variables.tf:
+            ```hcl
+            variable "cluster_arn" {
+              description = "ECS cluster ARN to monitor"
+              type        = string
+            }
+
+            variable "dispatches_table_name" {
+              description = "DynamoDB dispatches table name"
+              type        = string
+            }
+
+            variable "dispatches_table_arn" {
+              description = "DynamoDB dispatches table ARN"
+              type        = string
+            }
+
+            variable "lambda_zip_path" {
+              description = "Path to Lambda deployment package"
+              type        = string
+            }
+
+            variable "tags" {
+              description = "Tags to apply to resources"
+              type        = map(string)
+              default     = {}
+            }
+            ```
+
+            outputs.tf:
+            ```hcl
+            output "lambda_function_arn" {
+              description = "ARN of the dispatch callback Lambda"
+              value       = aws_lambda_function.dispatch_callback.arn
+            }
+
+            output "eventbridge_rule_arn" {
+              description = "ARN of the EventBridge rule"
+              value       = aws_cloudwatch_event_rule.ecs_task_state_change.arn
+            }
+
+            output "lambda_role_arn" {
+              description = "ARN of the Lambda IAM role"
+              value       = aws_iam_role.dispatch_callback_lambda.arn
+            }
+            ```
+
+        acceptance_criteria:
+          - "All required variables defined"
+          - "Variables have descriptions"
+          - "Outputs expose key ARNs"
+          - "Module is reusable"
+
+        test_command: "terraform validate"
+
+        rollback:
+          strategy: file_delete
+          command: "rm variables.tf outputs.tf"
+
+        resources:
+          estimated_minutes: 10
+          complexity: low
+
+        handoff:
+          next_task: T2.1
+          context: "Terraform module complete, proceed to Lambda code"
+
+# =============================================================================
+# TIER 2: LAMBDA IMPLEMENTATION
+# Implement the dispatch status callback Lambda function
+# =============================================================================
+
+  - tier_id: T2
+    name: "Lambda Implementation"
+    description: "Implement dispatch callback Lambda to update DynamoDB on task completion"
+    parallel: false
+
+    tasks:
+      # -------------------------------------------------------------------------
+      # T2.1: Create Lambda Project Structure
+      # -------------------------------------------------------------------------
+      - task_id: T2.1
+        name: "Create Lambda project structure"
+        status: pending
+        priority: critical
+
+        description: |
+          Create the Lambda function project directory with package.json and
+          TypeScript configuration.
+
+        dependencies:
+          - T1.4
+
+        interface:
+          inputs: []
+          outputs:
+            - name: lambda_dir
+              type: directory
+              value: "infrastructure/lambda/dispatch-callback/"
+
+        implementation:
+          location: "~/projects/outpost/infrastructure/lambda/dispatch-callback/"
+          change_type: creation
+          details: |
+            Create structure:
+            ```
+            dispatch-callback/
+            ├── package.json
+            ├── tsconfig.json
+            ├── src/
+            │   ├── index.ts          # Main handler
+            │   ├── dynamodb.ts       # DynamoDB operations
+            │   ├── types.ts          # TypeScript types
+            │   └── status-mapper.ts  # ECS → Dispatch status mapping
+            └── tests/
+                └── handler.test.ts
+            ```
+
+            package.json:
+            ```json
+            {
+              "name": "outpost-dispatch-callback",
+              "version": "1.0.0",
+              "description": "Lambda to update dispatch status on ECS task completion",
+              "main": "dist/index.js",
+              "scripts": {
+                "build": "tsc",
+                "package": "npm run build && cd dist && zip -r ../function.zip .",
+                "test": "vitest run"
+              },
+              "dependencies": {
+                "@aws-sdk/client-dynamodb": "^3.0.0",
+                "@aws-sdk/lib-dynamodb": "^3.0.0"
+              },
+              "devDependencies": {
+                "@types/aws-lambda": "^8.10.0",
+                "@types/node": "^20.0.0",
+                "typescript": "^5.0.0",
+                "vitest": "^1.0.0"
+              }
+            }
+            ```
+
+        acceptance_criteria:
+          - "Project structure created"
+          - "package.json with AWS SDK dependencies"
+          - "TypeScript configuration for Node 20"
+          - "Build script produces deployment package"
+
+        test_command: "npm install && npm run build"
+
+        rollback:
+          strategy: directory_delete
+          command: "rm -rf infrastructure/lambda/dispatch-callback/"
+
+        resources:
+          estimated_minutes: 15
+          complexity: low
+
+        handoff:
+          next_task: T2.2
+          context: "Project structure created, proceed to types definition"
+
+      # -------------------------------------------------------------------------
+      # T2.2: Define TypeScript Types
+      # -------------------------------------------------------------------------
+      - task_id: T2.2
+        name: "Define TypeScript types"
+        status: pending
+        priority: high
+
+        description: |
+          Define TypeScript types for ECS events and dispatch records.
+
+        dependencies:
+          - T2.1
+
+        interface:
+          inputs: []
+          outputs:
+            - name: types_file
+              type: file_path
+              value: "infrastructure/lambda/dispatch-callback/src/types.ts"
+
+        implementation:
+          location: "~/projects/outpost/infrastructure/lambda/dispatch-callback/src/types.ts"
+          change_type: creation
+          details: |
+            ```typescript
+            // ECS Task State Change Event from EventBridge
+            export interface EcsTaskStateChangeEvent {
+              version: string;
+              id: string;
+              'detail-type': 'ECS Task State Change';
+              source: 'aws.ecs';
+              account: string;
+              time: string;
+              region: string;
+              detail: EcsTaskDetail;
+            }
+
+            export interface EcsTaskDetail {
+              taskArn: string;
+              clusterArn: string;
+              taskDefinitionArn: string;
+              lastStatus: 'STOPPED' | 'RUNNING' | 'PENDING';
+              desiredStatus: string;
+              group: string;
+              launchType: 'FARGATE' | 'EC2';
+              startedAt?: string;
+              stoppedAt?: string;
+              stoppedReason?: string;
+              stopCode?: string;
+              containers: EcsContainer[];
+              overrides?: {
+                containerOverrides?: Array<{
+                  name: string;
+                  environment?: Array<{ name: string; value: string }>;
+                }>;
+              };
+            }
+
+            export interface EcsContainer {
+              name: string;
+              exitCode?: number;
+              reason?: string;
+              lastStatus: string;
+            }
+
+            // Dispatch status values
+            export type DispatchStatus =
+              | 'PENDING'
+              | 'RUNNING'
+              | 'COMPLETED'
+              | 'FAILED'
+              | 'TIMEOUT'
+              | 'CANCELLED';
+
+            // DynamoDB dispatch record
+            export interface DispatchRecord {
+              dispatch_id: string;
+              user_id: string;
+              agent: string;
+              task_arn?: string;
+              status: DispatchStatus;
+              started_at?: string;
+              ended_at?: string;
+              exit_code?: number;
+              error_message?: string;
+              version: number;
+            }
+            ```
+
+        acceptance_criteria:
+          - "ECS event types match EventBridge schema"
+          - "Dispatch status types match control plane"
+          - "All fields properly typed"
+          - "No any types used"
+
+        test_command: "npx tsc --noEmit"
+
+        rollback:
+          strategy: file_delete
+          command: "rm src/types.ts"
+
+        resources:
+          estimated_minutes: 15
+          complexity: low
+
+        handoff:
+          next_task: T2.3
+          context: "Types defined, proceed to status mapper"
+
+      # -------------------------------------------------------------------------
+      # T2.3: Implement Status Mapper
+      # -------------------------------------------------------------------------
+      - task_id: T2.3
+        name: "Implement status mapper"
+        status: pending
+        priority: critical
+
+        description: |
+          Implement function to map ECS task state to dispatch status.
+
+        dependencies:
+          - T2.2
+
+        interface:
+          inputs:
+            - name: types_file
+              type: file_path
+              value: "src/types.ts"
+          outputs:
+            - name: mapper_file
+              type: file_path
+              value: "infrastructure/lambda/dispatch-callback/src/status-mapper.ts"
+
+        implementation:
+          location: "~/projects/outpost/infrastructure/lambda/dispatch-callback/src/status-mapper.ts"
+          change_type: creation
+          details: |
+            ```typescript
+            import { EcsTaskDetail, EcsContainer, DispatchStatus } from './types';
+
+            export interface StatusMappingResult {
+              status: DispatchStatus;
+              exitCode?: number;
+              errorMessage?: string;
+            }
+
+            export function mapEcsTaskToDispatchStatus(
+              task: EcsTaskDetail
+            ): StatusMappingResult {
+              // Extract exit code from main container
+              const mainContainer = task.containers.find(c => c.name === 'agent')
+                                 || task.containers[0];
+              const exitCode = mainContainer?.exitCode;
+
+              // Check stop reason for specific failure patterns
+              const stoppedReason = task.stoppedReason?.toLowerCase() || '';
+              const stopCode = task.stopCode?.toLowerCase() || '';
+
+              // Timeout detection
+              if (
+                stoppedReason.includes('timeout') ||
+                stopCode === 'taskfailedtostart' ||
+                stoppedReason.includes('essential container')
+              ) {
+                return {
+                  status: 'TIMEOUT',
+                  exitCode,
+                  errorMessage: task.stoppedReason || 'Task timed out'
+                };
+              }
+
+              // Error/failure detection
+              if (
+                stoppedReason.includes('error') ||
+                stoppedReason.includes('failed') ||
+                stopCode === 'userinitiated' && stoppedReason.includes('cancel')
+              ) {
+                return {
+                  status: 'FAILED',
+                  exitCode,
+                  errorMessage: task.stoppedReason || 'Task failed'
+                };
+              }
+
+              // Cancellation detection
+              if (stopCode === 'userinitiated') {
+                return {
+                  status: 'CANCELLED',
+                  exitCode,
+                  errorMessage: 'Task cancelled by user'
+                };
+              }
+
+              // Exit code based status
+              if (exitCode !== undefined) {
+                if (exitCode === 0) {
+                  return {
+                    status: 'COMPLETED',
+                    exitCode
+                  };
+                } else {
+                  return {
+                    status: 'FAILED',
+                    exitCode,
+                    errorMessage: `Container exited with code ${exitCode}`
+                  };
+                }
+              }
+
+              // Default to FAILED if we can't determine status
+              return {
+                status: 'FAILED',
+                exitCode,
+                errorMessage: task.stoppedReason || 'Unknown failure'
+              };
+            }
+
+            export function extractDispatchId(task: EcsTaskDetail): string | null {
+              // Look for DISPATCH_ID in container environment overrides
+              const envOverride = task.overrides?.containerOverrides?.[0]?.environment;
+              const dispatchEnv = envOverride?.find(e => e.name === 'DISPATCH_ID');
+
+              if (dispatchEnv?.value) {
+                return dispatchEnv.value;
+              }
+
+              // Fallback: extract from task group (family:outpost-agent-{dispatchId})
+              const groupMatch = task.group?.match(/outpost-agent-(.+)$/);
+              if (groupMatch) {
+                return groupMatch[1];
+              }
+
+              return null;
+            }
+            ```
+
+        acceptance_criteria:
+          - "COMPLETED when exit code is 0"
+          - "FAILED when exit code is non-zero"
+          - "TIMEOUT detected from stopped reason"
+          - "CANCELLED detected from stop code"
+          - "Dispatch ID extracted from environment"
+
+        test_command: "npm test -- status-mapper"
+
+        rollback:
+          strategy: file_delete
+          command: "rm src/status-mapper.ts"
+
+        resources:
+          estimated_minutes: 25
+          complexity: medium
+
+        handoff:
+          next_task: T2.4
+          context: "Status mapper implemented, proceed to DynamoDB operations"
+
+      # -------------------------------------------------------------------------
+      # T2.4: Implement DynamoDB Operations
+      # -------------------------------------------------------------------------
+      - task_id: T2.4
+        name: "Implement DynamoDB operations"
+        status: pending
+        priority: critical
+
+        description: |
+          Implement DynamoDB update operations for dispatch status.
+
+        dependencies:
+          - T2.2
+
+        interface:
+          inputs:
+            - name: types_file
+              type: file_path
+              value: "src/types.ts"
+          outputs:
+            - name: dynamodb_file
+              type: file_path
+              value: "infrastructure/lambda/dispatch-callback/src/dynamodb.ts"
+
+        implementation:
+          location: "~/projects/outpost/infrastructure/lambda/dispatch-callback/src/dynamodb.ts"
+          change_type: creation
+          details: |
+            ```typescript
+            import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+            import {
+              DynamoDBDocumentClient,
+              UpdateCommand,
+              GetCommand,
+              QueryCommand
+            } from '@aws-sdk/lib-dynamodb';
+            import { DispatchStatus, DispatchRecord } from './types';
+
+            const client = new DynamoDBClient({});
+            const docClient = DynamoDBDocumentClient.from(client);
+
+            const TABLE_NAME = process.env.DISPATCHES_TABLE!;
+
+            export interface UpdateDispatchParams {
+              dispatchId: string;
+              status: DispatchStatus;
+              exitCode?: number;
+              errorMessage?: string;
+              endedAt: string;
+            }
+
+            export async function updateDispatchStatus(
+              params: UpdateDispatchParams
+            ): Promise<boolean> {
+              const { dispatchId, status, exitCode, errorMessage, endedAt } = params;
+
+              try {
+                // Build update expression dynamically
+                const updateParts: string[] = [
+                  '#status = :status',
+                  'ended_at = :endedAt',
+                  'updated_at = :updatedAt'
+                ];
+                const expressionValues: Record<string, unknown> = {
+                  ':status': status,
+                  ':endedAt': endedAt,
+                  ':updatedAt': new Date().toISOString(),
+                  ':runningStatus': 'RUNNING' // Only update if currently RUNNING
+                };
+
+                if (exitCode !== undefined) {
+                  updateParts.push('exit_code = :exitCode');
+                  expressionValues[':exitCode'] = exitCode;
+                }
+
+                if (errorMessage) {
+                  updateParts.push('error_message = :errorMessage');
+                  expressionValues[':errorMessage'] = errorMessage;
+                }
+
+                await docClient.send(new UpdateCommand({
+                  TableName: TABLE_NAME,
+                  Key: { dispatch_id: dispatchId },
+                  UpdateExpression: `SET ${updateParts.join(', ')}`,
+                  ConditionExpression: '#status = :runningStatus',
+                  ExpressionAttributeNames: { '#status': 'status' },
+                  ExpressionAttributeValues: expressionValues
+                }));
+
+                console.log(`Updated dispatch ${dispatchId} to ${status}`);
+                return true;
+
+              } catch (error: unknown) {
+                if ((error as Error).name === 'ConditionalCheckFailedException') {
+                  console.log(`Dispatch ${dispatchId} not in RUNNING state, skipping`);
+                  return false;
+                }
+                throw error;
+              }
+            }
+
+            export async function findDispatchByTaskArn(
+              taskArn: string
+            ): Promise<string | null> {
+              // Query GSI on task_arn
+              const result = await docClient.send(new QueryCommand({
+                TableName: TABLE_NAME,
+                IndexName: 'task-arn-index',
+                KeyConditionExpression: 'task_arn = :taskArn',
+                ExpressionAttributeValues: { ':taskArn': taskArn },
+                Limit: 1
+              }));
+
+              return result.Items?.[0]?.dispatch_id || null;
+            }
+            ```
+
+        acceptance_criteria:
+          - "UpdateItem with conditional check on RUNNING status"
+          - "Only updates dispatches in RUNNING state"
+          - "Handles ConditionalCheckFailedException gracefully"
+          - "Query by task_arn supported"
+
+        test_command: "npm test -- dynamodb"
+
+        rollback:
+          strategy: file_delete
+          command: "rm src/dynamodb.ts"
+
+        resources:
+          estimated_minutes: 25
+          complexity: medium
+
+        handoff:
+          next_task: T2.5
+          context: "DynamoDB operations implemented, proceed to main handler"
+
+      # -------------------------------------------------------------------------
+      # T2.5: Implement Main Lambda Handler
+      # -------------------------------------------------------------------------
+      - task_id: T2.5
+        name: "Implement main Lambda handler"
+        status: pending
+        priority: critical
+
+        description: |
+          Implement the main Lambda handler that processes EventBridge events.
+
+        dependencies:
+          - T2.3
+          - T2.4
+
+        interface:
+          inputs:
+            - name: mapper_file
+              type: file_path
+              value: "src/status-mapper.ts"
+            - name: dynamodb_file
+              type: file_path
+              value: "src/dynamodb.ts"
+          outputs:
+            - name: handler_file
+              type: file_path
+              value: "infrastructure/lambda/dispatch-callback/src/index.ts"
+
+        implementation:
+          location: "~/projects/outpost/infrastructure/lambda/dispatch-callback/src/index.ts"
+          change_type: creation
+          details: |
+            ```typescript
+            import { EventBridgeEvent, Context } from 'aws-lambda';
+            import { EcsTaskDetail, EcsTaskStateChangeEvent } from './types';
+            import { mapEcsTaskToDispatchStatus, extractDispatchId } from './status-mapper';
+            import { updateDispatchStatus, findDispatchByTaskArn } from './dynamodb';
+
+            export async function handler(
+              event: EventBridgeEvent<'ECS Task State Change', EcsTaskDetail>,
+              context: Context
+            ): Promise<{ statusCode: number; body: string }> {
+              console.log('Received event:', JSON.stringify(event, null, 2));
+
+              const task = event.detail;
+
+              // Only process STOPPED tasks
+              if (task.lastStatus !== 'STOPPED') {
+                console.log(`Ignoring non-STOPPED task: ${task.lastStatus}`);
+                return { statusCode: 200, body: 'Ignored: not STOPPED' };
+              }
+
+              // Extract dispatch ID
+              let dispatchId = extractDispatchId(task);
+
+              // Fallback: query by task ARN
+              if (!dispatchId) {
+                dispatchId = await findDispatchByTaskArn(task.taskArn);
+              }
+
+              if (!dispatchId) {
+                console.log(`No dispatch ID found for task ${task.taskArn}`);
+                return { statusCode: 200, body: 'No dispatch ID found' };
+              }
+
+              // Map ECS status to dispatch status
+              const { status, exitCode, errorMessage } = mapEcsTaskToDispatchStatus(task);
+
+              console.log(`Updating dispatch ${dispatchId}: status=${status}, exitCode=${exitCode}`);
+
+              // Update DynamoDB
+              const updated = await updateDispatchStatus({
+                dispatchId,
+                status,
+                exitCode,
+                errorMessage,
+                endedAt: task.stoppedAt || new Date().toISOString()
+              });
+
+              if (updated) {
+                console.log(`Successfully updated dispatch ${dispatchId} to ${status}`);
+              }
+
+              return {
+                statusCode: 200,
+                body: JSON.stringify({
+                  dispatchId,
+                  status,
+                  updated,
+                  taskArn: task.taskArn
+                })
+              };
+            }
+            ```
+
+        acceptance_criteria:
+          - "Handler processes EventBridge events"
+          - "Extracts dispatch ID from task"
+          - "Maps status correctly"
+          - "Updates DynamoDB"
+          - "Handles missing dispatch ID gracefully"
+
+        test_command: "npm run build && npm test"
+
+        rollback:
+          strategy: file_delete
+          command: "rm src/index.ts"
+
+        resources:
+          estimated_minutes: 20
+          complexity: medium
+
+        handoff:
+          next_task: T2.6
+          context: "Handler implemented, proceed to unit tests"
+
+      # -------------------------------------------------------------------------
+      # T2.6: Create Unit Tests for Lambda
+      # -------------------------------------------------------------------------
+      - task_id: T2.6
+        name: "Create Lambda unit tests"
+        status: pending
+        priority: high
+
+        description: |
+          Create comprehensive unit tests for the Lambda function.
+
+        dependencies:
+          - T2.5
+
+        interface:
+          inputs: []
+          outputs:
+            - name: test_file
+              type: file_path
+              value: "infrastructure/lambda/dispatch-callback/tests/handler.test.ts"
+
+        implementation:
+          location: "~/projects/outpost/infrastructure/lambda/dispatch-callback/tests/handler.test.ts"
+          change_type: creation
+          details: |
+            Create tests for:
+            - Status mapping (COMPLETED, FAILED, TIMEOUT, CANCELLED)
+            - Exit code handling (0 vs non-zero)
+            - Dispatch ID extraction (from env, from group)
+            - DynamoDB update with conditional check
+            - Handler integration with mocked services
+
+        acceptance_criteria:
+          - "Status mapper tested for all status values"
+          - "Exit code mapping tested"
+          - "Dispatch ID extraction tested"
+          - "DynamoDB operations mocked"
+          - "Handler tested end-to-end"
+
+        test_command: "npm test"
+
+        rollback:
+          strategy: file_delete
+          command: "rm tests/handler.test.ts"
+
+        resources:
+          estimated_minutes: 30
+          complexity: medium
+
+        handoff:
+          next_task: T2.7
+          context: "Unit tests created, proceed to build and package"
+
+      # -------------------------------------------------------------------------
+      # T2.7: Build and Package Lambda
+      # -------------------------------------------------------------------------
+      - task_id: T2.7
+        name: "Build and package Lambda"
+        status: pending
+        priority: critical
+
+        description: |
+          Build TypeScript and create deployment package.
+
+        dependencies:
+          - T2.6
+
+        interface:
+          inputs: []
+          outputs:
+            - name: lambda_zip
+              type: file_path
+              value: "infrastructure/lambda/dispatch-callback/function.zip"
+
+        implementation:
+          location: "~/projects/outpost/infrastructure/lambda/dispatch-callback/"
+          change_type: execution
+          details: |
+            1. npm install
+            2. npm run build
+            3. npm test
+            4. npm run package (creates function.zip)
+            5. Verify zip contains compiled JS
+
+        acceptance_criteria:
+          - "TypeScript compiles without errors"
+          - "All tests pass"
+          - "function.zip created"
+          - "Zip contains node_modules and dist/"
+
+        test_command: "npm run package && unzip -l function.zip"
+
+        rollback:
+          strategy: file_delete
+          command: "rm -rf dist/ function.zip"
+
+        resources:
+          estimated_minutes: 10
+          complexity: low
+
+        handoff:
+          next_task: T3.1
+          context: "Lambda packaged, proceed to deployment"
+
+# =============================================================================
+# TIER 3: INFRASTRUCTURE DEPLOYMENT
+# Deploy EventBridge and Lambda via Terraform
+# =============================================================================
+
+  - tier_id: T3
+    name: "Infrastructure Deployment"
+    description: "Deploy EventBridge rule and Lambda function via Terraform"
+    parallel: false
+
+    tasks:
+      # -------------------------------------------------------------------------
+      # T3.1: Add Module to Environment Configuration
+      # -------------------------------------------------------------------------
+      - task_id: T3.1
+        name: "Add module to dev environment"
+        status: pending
+        priority: critical
+
+        description: |
+          Add dispatch-callback module to dev environment Terraform configuration.
+
+        dependencies:
+          - T2.7
+
+        interface:
+          inputs:
+            - name: module_dir
+              type: directory
+              value: "infrastructure/terraform/modules/dispatch-callback/"
+            - name: lambda_zip
+              type: file_path
+              value: "infrastructure/lambda/dispatch-callback/function.zip"
+          outputs:
+            - name: env_config
+              type: file_path
+              value: "infrastructure/terraform/environments/dev/dispatch-callback.tf"
+
+        implementation:
+          location: "~/projects/outpost/infrastructure/terraform/environments/dev/dispatch-callback.tf"
+          change_type: creation
+          details: |
+            ```hcl
+            module "dispatch_callback" {
+              source = "../../modules/dispatch-callback"
+
+              cluster_arn           = aws_ecs_cluster.outpost_dev.arn
+              dispatches_table_name = aws_dynamodb_table.dispatches.name
+              dispatches_table_arn  = aws_dynamodb_table.dispatches.arn
+              lambda_zip_path       = "${path.module}/../../../../lambda/dispatch-callback/function.zip"
+
+              tags = {
+                Environment = "dev"
+                Service     = "outpost"
+              }
+            }
+            ```
+
+        acceptance_criteria:
+          - "Module instantiated with correct variables"
+          - "References existing cluster and table"
+          - "Lambda zip path correct"
+
+        test_command: "terraform init && terraform validate"
+
+        rollback:
+          strategy: file_delete
+          command: "rm dispatch-callback.tf"
+
+        resources:
+          estimated_minutes: 10
+          complexity: low
+
+        handoff:
+          next_task: T3.2
+          context: "Module added, proceed to Terraform plan"
+
+      # -------------------------------------------------------------------------
+      # T3.2: Add task-arn GSI to DynamoDB Table
+      # -------------------------------------------------------------------------
+      - task_id: T3.2
+        name: "Add task-arn GSI to DynamoDB"
+        status: pending
+        priority: critical
+
+        description: |
+          Add Global Secondary Index on task_arn to dispatches table for
+          lookup by ECS task ARN.
+
+        dependencies:
+          - T3.1
+
+        interface:
+          inputs:
+            - name: dynamodb_config
+              type: file_path
+              value: "infrastructure/terraform/environments/dev/dynamodb.tf"
+          outputs:
+            - name: updated_config
+              type: file_path
+              value: "infrastructure/terraform/environments/dev/dynamodb.tf"
+
+        implementation:
+          location: "~/projects/outpost/infrastructure/terraform/environments/dev/"
+          change_type: modification
+          details: |
+            Add GSI to dispatches table:
+            ```hcl
+            global_secondary_index {
+              name            = "task-arn-index"
+              hash_key        = "task_arn"
+              projection_type = "KEYS_ONLY"
+
+              read_capacity  = 5
+              write_capacity = 5
+            }
+            ```
+
+            Note: Adding GSI may require table recreation or online update
+            depending on existing configuration.
+
+        acceptance_criteria:
+          - "GSI defined in Terraform"
+          - "Hash key is task_arn"
+          - "Projection type is KEYS_ONLY for efficiency"
+
+        test_command: "terraform plan"
+
+        rollback:
+          strategy: terraform_destroy
+          command: "terraform apply -target=aws_dynamodb_table.dispatches"
+
+        resources:
+          estimated_minutes: 15
+          complexity: medium
+
+        handoff:
+          next_task: T3.3
+          context: "GSI added, proceed to Terraform plan"
+
+      # -------------------------------------------------------------------------
+      # T3.3: Run Terraform Plan
+      # -------------------------------------------------------------------------
+      - task_id: T3.3
+        name: "Run Terraform plan"
+        status: pending
+        priority: critical
+
+        description: |
+          Run Terraform plan to preview infrastructure changes.
+
+        dependencies:
+          - T3.2
+
+        interface:
+          inputs: []
+          outputs:
+            - name: plan_output
+              type: file_path
+              value: "/tmp/dispatch-callback.tfplan"
+
+        implementation:
+          location: "~/projects/outpost/infrastructure/terraform/environments/dev/"
+          change_type: execution
+          details: |
+            ```bash
+            cd ~/projects/outpost/infrastructure/terraform/environments/dev/
+            terraform init
+            terraform plan -out=/tmp/dispatch-callback.tfplan
+            ```
+
+        acceptance_criteria:
+          - "Plan shows EventBridge rule creation"
+          - "Plan shows Lambda function creation"
+          - "Plan shows IAM role creation"
+          - "No destructive changes to existing resources"
+
+        test_command: "terraform plan -detailed-exitcode"
+
+        rollback:
+          strategy: none
+          command: "N/A - plan only"
+
+        resources:
+          estimated_minutes: 5
+          complexity: low
+
+        handoff:
+          next_task: T3.4
+          context: "Plan reviewed, proceed to apply"
+
+      # -------------------------------------------------------------------------
+      # T3.4: Apply Terraform Changes
+      # -------------------------------------------------------------------------
+      - task_id: T3.4
+        name: "Apply Terraform changes"
+        status: pending
+        priority: critical
+
+        description: |
+          Apply Terraform changes to deploy EventBridge and Lambda.
+
+        dependencies:
+          - T3.3
+
+        interface:
+          inputs:
+            - name: plan_file
+              type: file_path
+              value: "/tmp/dispatch-callback.tfplan"
+          outputs:
+            - name: apply_result
+              type: object
+
+        implementation:
+          location: "~/projects/outpost/infrastructure/terraform/environments/dev/"
+          change_type: execution
+          details: |
+            ```bash
+            terraform apply /tmp/dispatch-callback.tfplan
+            ```
+
+        acceptance_criteria:
+          - "EventBridge rule created"
+          - "Lambda function deployed"
+          - "IAM role created"
+          - "EventBridge target configured"
+
+        test_command: "aws events describe-rule --name outpost-dispatch-completion --profile soc"
+
+        rollback:
+          strategy: terraform_destroy
+          command: "terraform destroy -target=module.dispatch_callback"
+
+        resources:
+          estimated_minutes: 10
+          complexity: low
+
+        handoff:
+          next_task: T3.5
+          context: "Infrastructure deployed, proceed to verification"
+
+      # -------------------------------------------------------------------------
+      # T3.5: Verify Deployment
+      # -------------------------------------------------------------------------
+      - task_id: T3.5
+        name: "Verify deployment"
+        status: pending
+        priority: high
+
+        description: |
+          Verify EventBridge rule and Lambda function are operational.
+
+        dependencies:
+          - T3.4
+
+        interface:
+          inputs: []
+          outputs:
+            - name: verification_result
+              type: object
+
+        implementation:
+          location: "AWS Console / CLI"
+          change_type: verification
+          details: |
+            1. Verify EventBridge rule exists and is enabled:
+               aws events describe-rule --name outpost-dispatch-completion --profile soc
+
+            2. Verify Lambda function exists:
+               aws lambda get-function --function-name outpost-dispatch-callback --profile soc
+
+            3. Verify Lambda has EventBridge permission:
+               aws lambda get-policy --function-name outpost-dispatch-callback --profile soc
+
+            4. Check Lambda CloudWatch log group exists:
+               aws logs describe-log-groups --log-group-name-prefix /aws/lambda/outpost-dispatch-callback --profile soc
+
+        acceptance_criteria:
+          - "EventBridge rule State is ENABLED"
+          - "Lambda function State is Active"
+          - "Lambda has EventBridge invoke permission"
+          - "CloudWatch log group exists"
+
+        test_command: "aws events describe-rule --name outpost-dispatch-completion --profile soc | jq '.State'"
+
+        rollback:
+          strategy: none
+          command: "N/A - verification only"
+
+        resources:
+          estimated_minutes: 10
+          complexity: low
+
+        handoff:
+          next_task: T4.1
+          context: "Deployment verified, proceed to cleanup"
+
+# =============================================================================
+# TIER 4: ZOMBIE DISPATCH CLEANUP
+# Clean up stale RUNNING/PENDING dispatch records
+# =============================================================================
+
+  - tier_id: T4
+    name: "Zombie Dispatch Cleanup"
+    description: "Clean up stale dispatch records stuck in RUNNING/PENDING state"
+    parallel: false
+
+    tasks:
+      # -------------------------------------------------------------------------
+      # T4.1: Create Cleanup Script
+      # -------------------------------------------------------------------------
+      - task_id: T4.1
+        name: "Create dispatch cleanup script"
+        status: pending
+        priority: high
+
+        description: |
+          Create script to identify and mark stale dispatches as TIMEOUT.
+
+        dependencies:
+          - T3.5
+
+        interface:
+          inputs: []
+          outputs:
+            - name: cleanup_script
+              type: file_path
+              value: "scripts/cleanup-zombie-dispatches.ts"
+
+        implementation:
+          location: "~/projects/outpost/scripts/cleanup-zombie-dispatches.ts"
+          change_type: creation
+          details: |
+            ```typescript
+            #!/usr/bin/env npx ts-node
+
+            import { DynamoDBClient, ScanCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
+            import { ECSClient, DescribeTasksCommand } from '@aws-sdk/client-ecs';
+
+            const DISPATCHES_TABLE = 'outpost-dispatches';
+            const CLUSTER_ARN = 'arn:aws:ecs:us-east-1:311493921645:cluster/outpost-dev';
+            const STALE_THRESHOLD_HOURS = 24;
+
+            async function main() {
+              const ddb = new DynamoDBClient({ region: 'us-east-1' });
+              const ecs = new ECSClient({ region: 'us-east-1' });
+
+              // Scan for RUNNING and PENDING dispatches
+              const result = await ddb.send(new ScanCommand({
+                TableName: DISPATCHES_TABLE,
+                FilterExpression: '#status IN (:running, :pending)',
+                ExpressionAttributeNames: { '#status': 'status' },
+                ExpressionAttributeValues: {
+                  ':running': { S: 'RUNNING' },
+                  ':pending': { S: 'PENDING' }
+                }
+              }));
+
+              console.log(`Found ${result.Items?.length || 0} stale dispatches`);
+
+              for (const item of result.Items || []) {
+                const dispatchId = item.dispatch_id.S!;
+                const taskArn = item.task_arn?.S;
+                const createdAt = new Date(item.created_at.S!);
+                const ageHours = (Date.now() - createdAt.getTime()) / (1000 * 60 * 60);
+
+                // Check if task exists in ECS
+                let taskExists = false;
+                if (taskArn) {
+                  try {
+                    const taskResult = await ecs.send(new DescribeTasksCommand({
+                      cluster: CLUSTER_ARN,
+                      tasks: [taskArn]
+                    }));
+                    taskExists = (taskResult.tasks?.length || 0) > 0;
+                  } catch (e) {
+                    // Task doesn't exist
+                  }
+                }
+
+                // If task doesn't exist and dispatch is old, mark as TIMEOUT
+                if (!taskExists && ageHours > STALE_THRESHOLD_HOURS) {
+                  console.log(`Marking ${dispatchId} as TIMEOUT (age: ${ageHours.toFixed(1)}h)`);
+
+                  await ddb.send(new UpdateItemCommand({
+                    TableName: DISPATCHES_TABLE,
+                    Key: { dispatch_id: { S: dispatchId } },
+                    UpdateExpression: 'SET #status = :timeout, ended_at = :now, error_message = :msg',
+                    ExpressionAttributeNames: { '#status': 'status' },
+                    ExpressionAttributeValues: {
+                      ':timeout': { S: 'TIMEOUT' },
+                      ':now': { S: new Date().toISOString() },
+                      ':msg': { S: 'Cleaned up stale dispatch (ECS task no longer exists)' }
+                    }
+                  }));
+                }
+              }
+
+              console.log('Cleanup complete');
+            }
+
+            main().catch(console.error);
+            ```
+
+        acceptance_criteria:
+          - "Script identifies RUNNING and PENDING dispatches"
+          - "Checks if ECS task still exists"
+          - "Marks stale dispatches as TIMEOUT"
+          - "Logs all actions for audit"
+
+        test_command: "npx ts-node scripts/cleanup-zombie-dispatches.ts --dry-run"
+
+        rollback:
+          strategy: none
+          command: "Manual DynamoDB restore if needed"
+
+        resources:
+          estimated_minutes: 20
+          complexity: medium
+
+        handoff:
+          next_task: T4.2
+          context: "Cleanup script created, proceed to execution"
+
+      # -------------------------------------------------------------------------
+      # T4.2: Execute Cleanup Script
+      # -------------------------------------------------------------------------
+      - task_id: T4.2
+        name: "Execute cleanup script"
+        status: pending
+        priority: high
+
+        description: |
+          Execute the cleanup script to mark zombie dispatches as TIMEOUT.
+
+        dependencies:
+          - T4.1
+
+        interface:
+          inputs:
+            - name: cleanup_script
+              type: file_path
+              value: "scripts/cleanup-zombie-dispatches.ts"
+          outputs:
+            - name: cleanup_report
+              type: object
+
+        implementation:
+          location: "~/projects/outpost/"
+          change_type: execution
+          details: |
+            ```bash
+            export AWS_PROFILE=soc
+            npx ts-node scripts/cleanup-zombie-dispatches.ts
+            ```
+
+        acceptance_criteria:
+          - "All 80 RUNNING zombies marked as TIMEOUT"
+          - "All 72 PENDING zombies marked as TIMEOUT"
+          - "No active dispatches affected"
+          - "Cleanup logged for audit"
+
+        test_command: "aws dynamodb scan --table-name outpost-dispatches --filter-expression '#s = :r' --expression-attribute-names '{\"#s\":\"status\"}' --expression-attribute-values '{\":r\":{\"S\":\"RUNNING\"}}' --select COUNT --profile soc"
+
+        rollback:
+          strategy: manual
+          command: "Restore from DynamoDB backup if needed"
+
+        resources:
+          estimated_minutes: 10
+          complexity: low
+
+        handoff:
+          next_task: T4.3
+          context: "Cleanup executed, proceed to verification"
+
+      # -------------------------------------------------------------------------
+      # T4.3: Verify Cleanup Results
+      # -------------------------------------------------------------------------
+      - task_id: T4.3
+        name: "Verify cleanup results"
+        status: pending
+        priority: high
+
+        description: |
+          Verify that zombie dispatches have been cleaned up.
+
+        dependencies:
+          - T4.2
+
+        interface:
+          inputs: []
+          outputs:
+            - name: verification_result
+              type: object
+
+        implementation:
+          location: "AWS CLI"
+          change_type: verification
+          details: |
+            ```bash
+            # Count RUNNING dispatches (should be 0 or only recent ones)
+            aws dynamodb scan --table-name outpost-dispatches \
+              --filter-expression '#s = :r' \
+              --expression-attribute-names '{"#s":"status"}' \
+              --expression-attribute-values '{":r":{"S":"RUNNING"}}' \
+              --select COUNT --profile soc
+
+            # Count PENDING dispatches (should be 0 or only recent ones)
+            aws dynamodb scan --table-name outpost-dispatches \
+              --filter-expression '#s = :p' \
+              --expression-attribute-names '{"#s":"status"}' \
+              --expression-attribute-values '{":p":{"S":"PENDING"}}' \
+              --select COUNT --profile soc
+
+            # Count TIMEOUT dispatches (should include cleaned up records)
+            aws dynamodb scan --table-name outpost-dispatches \
+              --filter-expression '#s = :t' \
+              --expression-attribute-names '{"#s":"status"}' \
+              --expression-attribute-values '{":t":{"S":"TIMEOUT"}}' \
+              --select COUNT --profile soc
+            ```
+
+        acceptance_criteria:
+          - "Zero or minimal RUNNING dispatches (only active ones)"
+          - "Zero or minimal PENDING dispatches"
+          - "TIMEOUT count increased by ~152"
+
+        test_command: "Run verification queries above"
+
+        rollback:
+          strategy: none
+          command: "N/A - verification only"
+
+        resources:
+          estimated_minutes: 5
+          complexity: low
+
+        handoff:
+          next_task: T5.1
+          context: "Cleanup verified, proceed to integration testing"
+
+# =============================================================================
+# TIER 5: INTEGRATION TESTING
+# End-to-end testing of status callback mechanism
+# =============================================================================
+
+  - tier_id: T5
+    name: "Integration Testing"
+    description: "End-to-end testing of the complete status callback flow"
+    parallel: false
+
+    tasks:
+      # -------------------------------------------------------------------------
+      # T5.1: Test Single Agent Dispatch
+      # -------------------------------------------------------------------------
+      - task_id: T5.1
+        name: "Test single agent dispatch"
+        status: pending
+        priority: critical
+
+        description: |
+          Test that a single agent dispatch correctly transitions to COMPLETED.
+
+        dependencies:
+          - T4.3
+
+        interface:
+          inputs: []
+          outputs:
+            - name: test_result
+              type: object
+
+        implementation:
+          location: "HTTP API"
+          change_type: execution
+          details: |
+            1. Dispatch simple task to claude agent:
+               ```bash
+               curl -X POST http://outpost-control-plane-dev-140603164.us-east-1.elb.amazonaws.com/api/v1/dispatches \
+                 -H "Content-Type: application/json" \
+                 -H "Authorization: Bearer $API_KEY" \
+                 -d '{"agent":"claude","task":"echo hello world","timeoutSeconds":60}'
+               ```
+
+            2. Poll for completion:
+               ```bash
+               curl http://outpost-control-plane-dev-140603164.us-east-1.elb.amazonaws.com/api/v1/dispatches/$DISPATCH_ID
+               ```
+
+            3. Verify status transitions:
+               - PENDING → RUNNING → COMPLETED (within 60s)
+
+            4. Check Lambda logs for callback execution
+
+        acceptance_criteria:
+          - "Dispatch transitions to COMPLETED"
+          - "Exit code is 0"
+          - "Lambda callback logged in CloudWatch"
+          - "DynamoDB record shows ended_at"
+
+        test_command: "Run test dispatch and verify status"
+
+        rollback:
+          strategy: none
+          command: "N/A - test only"
+
+        resources:
+          estimated_minutes: 10
+          complexity: low
+
+        handoff:
+          next_task: T5.2
+          context: "Single dispatch verified, proceed to multi-agent test"
+
+      # -------------------------------------------------------------------------
+      # T5.2: Test Multi-Agent Dispatch
+      # -------------------------------------------------------------------------
+      - task_id: T5.2
+        name: "Test multi-agent dispatch"
+        status: pending
+        priority: critical
+
+        description: |
+          Test that all 5 agents correctly complete and transition status.
+
+        dependencies:
+          - T5.1
+
+        interface:
+          inputs: []
+          outputs:
+            - name: test_result
+              type: object
+
+        implementation:
+          location: "HTTP API / E2E Tests"
+          change_type: execution
+          details: |
+            1. Run updated multi-agent E2E test:
+               ```bash
+               cd ~/projects/mcpify
+               OUTPOST_API_URL=http://outpost-control-plane-dev-140603164.us-east-1.elb.amazonaws.com \
+               npx vitest run tests/integration/multi-agent.e2e.test.ts
+               ```
+
+            2. Verify all agents complete:
+               - claude: COMPLETED
+               - codex: COMPLETED
+               - gemini: COMPLETED
+               - aider: COMPLETED
+               - grok: COMPLETED
+
+        acceptance_criteria:
+          - "All 5 agents reach COMPLETED status"
+          - "E2E test passes"
+          - "No agents stuck in RUNNING"
+          - "Lambda callback triggered for each"
+
+        test_command: "npx vitest run tests/integration/multi-agent.e2e.test.ts"
+
+        rollback:
+          strategy: none
+          command: "N/A - test only"
+
+        resources:
+          estimated_minutes: 15
+          complexity: medium
+
+        handoff:
+          next_task: T5.3
+          context: "Multi-agent verified, proceed to failure case testing"
+
+      # -------------------------------------------------------------------------
+      # T5.3: Test Failure Case Handling
+      # -------------------------------------------------------------------------
+      - task_id: T5.3
+        name: "Test failure case handling"
+        status: pending
+        priority: high
+
+        description: |
+          Test that failed tasks correctly transition to FAILED status.
+
+        dependencies:
+          - T5.2
+
+        interface:
+          inputs: []
+          outputs:
+            - name: test_result
+              type: object
+
+        implementation:
+          location: "HTTP API"
+          change_type: execution
+          details: |
+            1. Dispatch task that will fail:
+               ```bash
+               curl -X POST http://outpost-control-plane-dev-140603164.us-east-1.elb.amazonaws.com/api/v1/dispatches \
+                 -H "Content-Type: application/json" \
+                 -d '{"agent":"claude","task":"exit 1","timeoutSeconds":60}'
+               ```
+
+            2. Verify transitions to FAILED
+            3. Check exit code captured (should be 1)
+            4. Check error_message populated
+
+        acceptance_criteria:
+          - "Dispatch transitions to FAILED"
+          - "Exit code is non-zero"
+          - "Error message captured"
+          - "Lambda callback logged failure"
+
+        test_command: "Run failure test dispatch"
+
+        rollback:
+          strategy: none
+          command: "N/A - test only"
+
+        resources:
+          estimated_minutes: 10
+          complexity: low
+
+        handoff:
+          next_task: T5.4
+          context: "Failure handling verified, proceed to full test suite"
+
+      # -------------------------------------------------------------------------
+      # T5.4: Run Full Test Suite
+      # -------------------------------------------------------------------------
+      - task_id: T5.4
+        name: "Run full test suite"
+        status: pending
+        priority: critical
+
+        description: |
+          Execute complete test suite across MCPify and control plane.
+
+        dependencies:
+          - T5.3
+
+        interface:
+          inputs: []
+          outputs:
+            - name: test_report
+              type: object
+
+        implementation:
+          location: "~/projects/mcpify/ and ~/projects/outpost/src/control-plane/"
+          change_type: execution
+          details: |
+            1. Run MCPify tests:
+               ```bash
+               cd ~/projects/mcpify && npm test
+               ```
+
+            2. Run control plane tests:
+               ```bash
+               cd ~/projects/outpost/src/control-plane && npm test
+               ```
+
+            3. Run Lambda tests:
+               ```bash
+               cd ~/projects/outpost/infrastructure/lambda/dispatch-callback && npm test
+               ```
+
+        acceptance_criteria:
+          - "MCPify: 100% tests passing"
+          - "Control plane: 100% tests passing"
+          - "Lambda: 100% tests passing"
+          - "E2E multi-agent test passing"
+
+        test_command: "npm test (in each directory)"
+
+        rollback:
+          strategy: none
+          command: "N/A - test only"
+
+        resources:
+          estimated_minutes: 20
+          complexity: medium
+
+        handoff:
+          next_task: T5.5
+          context: "Full suite passed, proceed to documentation"
+
+      # -------------------------------------------------------------------------
+      # T5.5: Document Changes
+      # -------------------------------------------------------------------------
+      - task_id: T5.5
+        name: "Document changes"
+        status: pending
+        priority: medium
+
+        description: |
+          Update documentation with status callback architecture.
+
+        dependencies:
+          - T5.4
+
+        interface:
+          inputs: []
+          outputs:
+            - name: updated_docs
+              type: file_list
+
+        implementation:
+          location: "~/projects/outpost/"
+          change_type: modification
+          details: |
+            Update:
+            - README.md with status callback architecture diagram
+            - Architecture docs with EventBridge flow
+            - Runbook for monitoring Lambda errors
+
+        acceptance_criteria:
+          - "Architecture diagram updated"
+          - "Status callback flow documented"
+          - "Troubleshooting guide included"
+
+        test_command: "Review documentation"
+
+        rollback:
+          strategy: git_revert
+          command: "git checkout HEAD -- docs/"
+
+        resources:
+          estimated_minutes: 20
+          complexity: low
+
+        handoff:
+          next_task: null
+          context: "Blueprint complete"
+
+# =============================================================================
+# VERIFICATION & COMPLETION
+# =============================================================================
+
+verification:
+  automated_checks:
+    - name: "E2E tests pass"
+      command: "cd ~/projects/mcpify && npm test -- tests/integration/multi-agent.e2e.test.ts"
+      expected_result: "All tests pass"
+
+    - name: "Lambda deployed"
+      command: "aws lambda get-function --function-name outpost-dispatch-callback --profile soc"
+      expected_result: "Function exists and is Active"
+
+    - name: "EventBridge rule enabled"
+      command: "aws events describe-rule --name outpost-dispatch-completion --profile soc | jq '.State'"
+      expected_result: "ENABLED"
+
+    - name: "No zombie dispatches"
+      command: "aws dynamodb scan --table-name outpost-dispatches --filter-expression '#s = :r' --expression-attribute-names '{\"#s\":\"status\"}' --expression-attribute-values '{\":r\":{\"S\":\"RUNNING\"}}' --select COUNT --profile soc"
+      expected_result: "Count is 0 or only active dispatches"
+
+  manual_checks:
+    - name: "Dispatch completes successfully"
+      procedure: "Dispatch task via MCP, verify COMPLETED status within 60s"
+
+    - name: "Lambda logs show callback"
+      procedure: "Check CloudWatch /aws/lambda/outpost-dispatch-callback logs"
+
+completion:
+  success_criteria:
+    - "All 24 tasks completed successfully"
+    - "E2E multi-agent test passes (5/5 agents COMPLETED)"
+    - "Lambda callback operational"
+    - "Zero zombie dispatches"
+    - "Status callback latency < 60s"
+
+  deliverables:
+    - "E2E tests migrated to HTTP mode"
+    - "EventBridge rule for ECS task state changes"
+    - "Lambda function for status callback"
+    - "DynamoDB GSI for task_arn lookup"
+    - "Zombie dispatch cleanup"
+    - "Updated documentation"
+
+  estimated_effort:
+    tasks: 24
+    tiers: 6
+    complexity: high
+
+# =============================================================================
+# SUMMARY
+# =============================================================================
+#
+# Blueprint: OUTPOST_V2_STATUS_CALLBACK
+# Purpose: Fix dispatch status tracking by implementing ECS → DynamoDB callback
+#
+# Tiers:
+#   T0: E2E Test Migration (5 tasks) - Migrate from SSM to HTTP mode
+#   T1: EventBridge Infrastructure (4 tasks) - Terraform module for rule/Lambda
+#   T2: Lambda Implementation (7 tasks) - Status callback Lambda function
+#   T3: Infrastructure Deployment (5 tasks) - Deploy via Terraform
+#   T4: Zombie Dispatch Cleanup (3 tasks) - Clean stale RUNNING/PENDING records
+#   T5: Integration Testing (5 tasks) - End-to-end validation
+#
+# Total Tasks: 29
+# Depth: 5 (Enterprise - Maximum Granularity)
+# BSF Version: 2.1.0
+#
+# Root Causes Addressed:
+#   RC1: No callback from ECS → DynamoDB (EventBridge + Lambda)
+#   RC2: E2E tests using deprecated SSM mode (HTTP migration)
+#   RC3: 152 zombie dispatch records (cleanup script)
+#
+# Expected Outcome:
+#   - Dispatches transition to COMPLETED/FAILED within 60s of task termination
+#   - E2E tests pass using HTTP control plane
+#   - Zero zombie dispatches in database
+#   - Fleet agents 100% operational
+#
+# =============================================================================
